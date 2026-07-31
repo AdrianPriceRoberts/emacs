@@ -194,6 +194,7 @@
                  (vulpea-note-path
                   (vulpea-create "Quick Note"))))
          "%?")
+	
         ("l" "Lab notebook entry" plain
          (file (lambda ()
                  (let ((title (read-string "Lab entry title: "))
@@ -208,7 +209,11 @@
                                    ("ALIASES" . ,page-id))
                      :head "#+created: %<[%Y-%m-%d]>")))))
          "* Notes\n%?"
-         :unnarrowed t)))
+         :unnarrowed t)
+	
+  ("i" "Inbox" entry (file "inbox.org")
+   ,(concat "* TODO %?\n"
+	    "/Entered on/ %U"))))
 
 ;; Disable  unwanted widgets
 (use-package vulpea-ui
@@ -222,6 +227,9 @@
    (calendar . 150)
    (created-today . 350)
    (previous-years . 360)))
+
+(setq org-directory "~/Documents/org")
+(setq org-agenda-files (list "inbox.org"))
 
 (use-package ivy
     :diminish

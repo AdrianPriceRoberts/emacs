@@ -271,6 +271,7 @@
                    (vulpea-note-path
                     (vulpea-create "Quick Note"))))
            "%?")
+  	
           ("l" "Lab notebook entry" plain
            (file (lambda ()
                    (let ((title (read-string "Lab entry title: "))
@@ -285,8 +286,12 @@
                                      ("ALIASES" . ,page-id))
                        :head "#+created: %<[%Y-%m-%d]>")))))
            "* Notes\n%?"
-           :unnarrowed t)))
-  
+           :unnarrowed t)
+  	
+    ("i" "Inbox" entry (file "inbox.org")
+     ,(concat "* TODO %?\n"
+  	    "/Entered on/ %U"))))
+
 
 #+end_src
 
@@ -313,6 +318,14 @@
 
 #+RESULTS:
 : ((nav . 50) (calendar . 150) (created-today . 350) (previous-years . 360))
+** Getting Things Done
+#+begin_src emacs-lisp
+  (setq org-directory "~/Documents/org")
+  (setq org-agenda-files (list "inbox.org"))
+#+end_src
+
+#+RESULTS:
+| inbox.org |
 
 * Ivy
 #+begin_src emacs-lisp
