@@ -1,22 +1,48 @@
-
 (setq inhibit-startup-message t)
 
-(scroll-bar-mode -1)        ; Disable visible scrollbar
-(tool-bar-mode -1)          ; Disable the toolbar
-(tooltip-mode -1)           ; Disable tooltips
-(set-fringe-mode 10)        ; Give some breathing room
+  (scroll-bar-mode -1)        ; Disable visible scrollbar
+  (tool-bar-mode -1)          ; Disable the toolbar
+  (tooltip-mode -1)           ; Disable tooltips
+  (set-fringe-mode 10)        ; Give some breathing room
 
-(menu-bar-mode -1)            ; Disable the menu bar
+  (menu-bar-mode -1)            ; Disable the menu bar
 
-;; Set up the visible bell
-(setq visible-bell t)
+  ;; Set up the visible bell
+  (setq visible-bell t)
 
+  (load-theme 'doom-laserwave t)
+
+;; Show line numbers in some modes
+(column-number-mode)
+(dolist (mode '(prog-mode-hook))
+  (add-hook mode (lambda () (display-line-numbers-mode 1))))
+
+;; Disable line numbers in some modes
+(dolist (mode '(org-mode-hook
+		term-mode-hook
+		eshell-mode-hook
+		shell-mode-hook))
+
+  (add-hook mode (lambda () (display-line-numbers-mode 0))))
+
+(use-package doom-themes)
+(use-package doom-modeline
+  :ensure t
+  :init (doom-modeline-mode 1)
+  :custom ((doom-modeline-height 15)))
+
+;; Rainbow brackets
+(use-package rainbow-delimiters
+  :hook (prog-mode . rainbow-delimiters-mode))
+
+;; Set default font
 (set-face-attribute 'default nil :font "Fira Code Retina" :height 280)
 
-(load-theme 'modus-vivendi-tinted t)
+;; Set the fixed pitch face
+(set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 260)
 
-;; Make ESC quit prompts
-(global-set-key (kbd "<escape>") 'keyboard-escape-quit)
+;; Set the variable pitch face
+(set-face-attribute 'variable-pitch nil :font "Cantarell" :height 295 :weight 'regular)
 
 ;; Initialize package sources
 (require 'package)
@@ -36,64 +62,16 @@
 (require 'use-package)
 (setq use-package-always-ensure t)
 
-;; Show line numbers
-(column-number-mode)
-(global-display-line-numbers-mode t)
+;; Make ESC quit prompts
+(global-set-key (kbd "<escape>") 'keyboard-escape-quit)
 
-;; Disable line numbers in some modes
-(dolist (mode '(org-mode-hook
-		term-mode-hook
-		eshell-mode-hook
-		shell-mode-hook))
-  (add-hook mode (lambda () (display-line-numbers-mode 0))))
+;; general is useful for defining custom keybindings
+(use-package general)
 
-(use-package command-log-mode)
-
-(use-package ivy
-  :diminish
-  :demand t
-  :bind (("C-s" . swiper)
-         :map ivy-minibuffer-map
-         ("TAB" . ivy-alt-done)	
-         ("C-l" . ivy-alt-done)
-         ("C-j" . ivy-next-line)
-         ("C-k" . ivy-previous-line)
-         :map ivy-switch-buffer-map
-         ("C-k" . ivy-previous-line)
-         ("C-l" . ivy-done)
-         ("C-d" . ivy-switch-buffer-kill)
-         :map ivy-reverse-i-search-map
-         ("C-k" . ivy-previous-line)
-         ("C-d" . ivy-reverse-i-search-kill))
-  :config
-  (ivy-mode 1))
-
-(use-package doom-themes)
-(use-package doom-modeline
-  :ensure t
-  :init (doom-modeline-mode 1)
-  :custom ((doom-modeline-height 15)))
-(custom-set-variables
- ;; custom-set-variables was added by Custom.
- ;; If you edit it by hand, you could mess it up, so be careful.
- ;; Your init file should contain only one such instance.
- ;; If there is more than one, they won't work right.
- '(custom-safe-themes
-   '("8d3ef5ff6273f2a552152c7febc40eabca26bae05bd12bc85062e2dc224cde9a"
-     default))
- '(package-selected-packages
-   '(command-log-mode counsel doom-modeline doom-themes helpful ivy
-		      ivy-rich rainbow-delimiters)))
-(custom-set-faces
- ;; custom-set-faces was added by Custom.
- ;; If you edit it by hand, you could mess it up, so be careful.
- ;; Your init file should contain only one such instance.
- ;; If there is more than one, they won't work right.
- )
-
-;; Rainbow brackets
-(use-package rainbow-delimiters
-  :hook (prog-mode . rainbow-delimiters-mode))
+(general-define-key
+ :prefix "C-c"
+  "c" 'org-capture
+  "j" 'vulpea-journal)
 
 (use-package which-key
   :init (which-key-mode)
@@ -101,6 +79,171 @@
   :config
   (setq which-key-idle-delay 0.5))
 
+(org-babel-do-load-languages
+   'org-babel-load-languages
+   '((emacs-lisp . t)
+     (python . t)))
+
+(setq org-confirm-babel-evaluate nil)
+
+(require 'org-tempo)
+
+(add-to-list 'org-structure-template-alist '("sh" . "src shell"))
+(add-to-list 'org-structure-template-alist '("el" . "src emacs-lisp"))
+(add-to-list 'org-structure-template-alist '("py" . "src python"))
+
+(defun efs/org-font-setup ()
+  ;; Replace list hyphen with dot
+  (font-lock-add-keywords 'org-mode
+                          '(("^ *\\([-]\\) "
+                             (0 (prog1 () (compose-region (match-beginning 1) (match-end 1) "•"))))))
+
+  ;; Set faces for heading levels
+  (dolist (face '((org-level-1 . 1.2)
+                  (org-level-2 . 1.1)
+                  (org-level-3 . 1.05)
+                  (org-level-4 . 1.0)
+                  (org-level-5 . 1.1)
+                  (org-level-6 . 1.1)
+                  (org-level-7 . 1.1)
+                  (org-level-8 . 1.1)))
+    (set-face-attribute (car face) nil :font "Cantarell" :weight 'regular :height (cdr face)))
+
+  ;; Ensure that anything that should be fixed-pitch in Org files appears that way
+  (set-face-attribute 'org-block nil :foreground nil :inherit 'fixed-pitch)
+  (set-face-attribute 'org-code nil   :inherit '(shadow fixed-pitch))
+  (set-face-attribute 'org-table nil   :inherit '(shadow fixed-pitch))
+  (set-face-attribute 'org-verbatim nil :inherit '(shadow fixed-pitch))
+  (set-face-attribute 'org-special-keyword nil :inherit '(font-lock-comment-face fixed-pitch))
+  (set-face-attribute 'org-meta-line nil :inherit '(font-lock-comment-face fixed-pitch))
+  (set-face-attribute 'org-checkbox nil :inherit 'fixed-pitch))
+
+
+(defun efs/org-mode-setup ()
+  (org-indent-mode)
+  (variable-pitch-mode 1)
+  (visual-line-mode 1))
+
+(use-package org
+  :hook (org-mode . efs/org-mode-setup)
+  :config
+  (setq org-ellipsis " ▾"
+	org-hide-emphasis-markers t)
+  (efs/org-font-setup))
+
+
+(use-package org-bullets
+  :after org
+  :hook (org-mode . org-bullets-mode)
+  :custom
+  (org-bullets-bullet-list '("◉" "○" "●" "○" "●" "○" "●")))
+
+(defun efs/org-mode-visual-fill ()
+  (setq visual-fill-column-width 100
+        visual-fill-column-center-text t)
+  (visual-fill-column-mode 1))
+
+(use-package visual-fill-column
+  :hook (org-mode . efs/org-mode-visual-fill))
+
+;; Automatically tangle our Emacs.org config file when we save it
+(defun efs/org-babel-tangle-config ()
+  (when (string-equal (buffer-file-name)
+                      (expand-file-name "~/.emacs.d/emacs.org"))
+    ;; Dynamic scoping to the rescue
+    (let ((org-confirm-babel-evaluate nil))
+      (org-babel-tangle))))
+
+(add-hook 'org-mode-hook (lambda () (add-hook 'after-save-hook #'efs/org-babel-tangle-config)))
+
+(use-package vulpea)
+(use-package vulpea-journal
+  :after (vulpea-ui)
+  :config
+(vulpea-journal-setup))
+
+(setq vulpea-db-sync-directories '("~/org/"))
+
+;; Trigger the database scan.
+;; I don't actually need to have this in here, its just so I don't forget the command.
+(vulpea-db-sync-full-scan)
+
+;; Enable auto syncing
+(vulpea-db-autosync-mode +1)
+
+;; Open journal on Emacs startup
+(add-hook 'emacs-startup-hook #'vulpea-journal)
+
+;; Default journal template
+(use-package vulpea-journal
+  :after (vulpea vulpea-ui)
+  :config
+  (vulpea-journal-setup)
+
+  (setq vulpea-journal-default-template
+        (vulpea-journal-template-daily
+         :file-name "daily/%Y-%m-%d.org"
+         :title "%A, %B %d, %Y"
+         :head "#+created: %<[%Y-%m-%d]>"
+         :body "%?")))
+
+;; org capture
+(setq org-capture-templates
+      '(("n" "Note" plain
+         (file (lambda ()
+                 (vulpea-note-path
+                  (vulpea-create "Quick Note"))))
+         "%?")
+        ("l" "Lab notebook entry" plain
+         (file (lambda ()
+                 (let ((title (read-string "Lab entry title: "))
+                       (page-id (read-string "Page ID: ")))
+                   (vulpea-note-path
+                    (vulpea-create
+                     title
+                     nil
+                     :tags '("lab")
+                     :properties `(("PAGE_ID" . ,page-id)
+                                   ("CREATED" . ,(format-time-string "[%Y-%m-%d]"))
+                                   ("ALIASES" . ,page-id))
+                     :head "#+created: %<[%Y-%m-%d]>")))))
+         "* Notes\n%?"
+         :unnarrowed t)))
+
+;; Disable  unwanted widgets
+(use-package vulpea-ui
+  :config
+  (dolist (widget '(stats previous-years))
+  (vulpea-ui-unregister-widget widget)))
+
+;; Journal ui widget order
+(setq vulpea-journal-ui-widget-ui-orders
+ '((nav . 50)
+   (calendar . 150)
+   (created-today . 350)
+   (previous-years . 360)))
+
+(use-package ivy
+    :diminish
+    :demand t
+    :bind (("C-s" . swiper)
+           :map ivy-minibuffer-map
+           ("TAB" . ivy-alt-done)	
+           ("C-l" . ivy-alt-done)
+           ("C-j" . ivy-next-line)
+           ("C-k" . ivy-previous-line)
+           :map ivy-switch-buffer-map
+           ("C-k" . ivy-previous-line)
+           ("C-l" . ivy-done)
+           ("C-d" . ivy-switch-buffer-kill)
+           :map ivy-reverse-i-search-map
+           ("C-k" . ivy-previous-line)
+           ("C-d" . ivy-reverse-i-search-kill))
+    :config
+    (ivy-mode 1))
+
+
+  
 (use-package ivy-rich
   :init
   (ivy-rich-mode 1))
@@ -124,3 +267,23 @@
   ([remap describe-command] . helpful-command)
   ([remap describe-variable] . counsel-describe-variable)
   ([remap describe-key] . helpful-key))
+
+;; Projectile detects you're in a code repo folder and loads some project-specific behaviour
+(use-package projectile
+  :diminish projectile-mode
+  :config (projectile-mode)
+  :custom ((projectile-completion-system 'ivy))
+  :bind-keymap
+  ("C-c p" . projectile-command-map)
+  :init
+  (when (file-directory-p "~/Projects/Code")
+    (setq projecitle-project-search-path '("~/Projects/Code")))
+  (setq projecitle-switch-project-action #'projectile-dired))
+
+(use-package counsel-projectile
+  :config (counsel-projectile-mode))
+
+(use-package gcmh
+  :ensure t
+  :config
+  (gcmh-mode 1))
