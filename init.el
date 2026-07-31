@@ -1,49 +1,3 @@
-(setq inhibit-startup-message t)
-
-  (scroll-bar-mode -1)        ; Disable visible scrollbar
-  (tool-bar-mode -1)          ; Disable the toolbar
-  (tooltip-mode -1)           ; Disable tooltips
-  (set-fringe-mode 10)        ; Give some breathing room
-
-  (menu-bar-mode -1)            ; Disable the menu bar
-
-  ;; Set up the visible bell
-  (setq visible-bell t)
-
-  (load-theme 'doom-laserwave t)
-
-;; Show line numbers in some modes
-(column-number-mode)
-(dolist (mode '(prog-mode-hook))
-  (add-hook mode (lambda () (display-line-numbers-mode 1))))
-
-;; Disable line numbers in some modes
-(dolist (mode '(org-mode-hook
-		term-mode-hook
-		eshell-mode-hook
-		shell-mode-hook))
-
-  (add-hook mode (lambda () (display-line-numbers-mode 0))))
-
-(use-package doom-themes)
-(use-package doom-modeline
-  :ensure t
-  :init (doom-modeline-mode 1)
-  :custom ((doom-modeline-height 15)))
-
-;; Rainbow brackets
-(use-package rainbow-delimiters
-  :hook (prog-mode . rainbow-delimiters-mode))
-
-;; Set default font
-(set-face-attribute 'default nil :font "Fira Code Retina" :height 280)
-
-;; Set the fixed pitch face
-(set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 260)
-
-;; Set the variable pitch face
-(set-face-attribute 'variable-pitch nil :font "Cantarell" :height 295 :weight 'regular)
-
 ;; Initialize package sources
 (require 'package)
 
@@ -61,6 +15,52 @@
 
 (require 'use-package)
 (setq use-package-always-ensure t)
+
+(setq inhibit-startup-message t)
+
+  (scroll-bar-mode -1)        ; Disable visible scrollbar
+  (tool-bar-mode -1)          ; Disable the toolbar
+  (tooltip-mode -1)           ; Disable tooltips
+  (set-fringe-mode 10)        ; Give some breathing room
+
+  (menu-bar-mode -1)            ; Disable the menu bar
+
+  ;; Set up the visible bell
+  (setq visible-bell t)
+
+;; Show line numbers in some modes
+(column-number-mode)
+(dolist (mode '(prog-mode-hook))
+  (add-hook mode (lambda () (display-line-numbers-mode 1))))
+
+;; Disable line numbers in some modes
+(dolist (mode '(org-mode-hook
+  	      term-mode-hook
+  	      eshell-mode-hook
+  	      shell-mode-hook))
+
+  (add-hook mode (lambda () (display-line-numbers-mode 0))))
+
+(use-package doom-themes)
+(use-package doom-modeline
+  :ensure t
+  :init (doom-modeline-mode 1)
+  :custom ((doom-modeline-height 15)))
+
+(load-theme 'doom-laserwave t)
+
+;; Rainbow brackets
+(use-package rainbow-delimiters
+  :hook (prog-mode . rainbow-delimiters-mode))
+
+;; Set default font
+(set-face-attribute 'default nil :font "Fira Code Retina" :height 280)
+
+;; Set the fixed pitch face
+(set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 260)
+
+;; Set the variable pitch face
+(set-face-attribute 'variable-pitch nil :font "Cantarell" :height 295 :weight 'regular)
 
 ;; Make ESC quit prompts
 (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
@@ -243,7 +243,7 @@
     (ivy-mode 1))
 
 
-  
+
 (use-package ivy-rich
   :init
   (ivy-rich-mode 1))
