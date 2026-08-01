@@ -80,17 +80,16 @@
 #+begin_src emacs-lisp
   
   ;; Set default font
-  (set-face-attribute 'default nil :font "Fira Code Retina" :height 280)
+  (set-face-attribute 'default nil :font "Fira Code Retina" :height 200)
 
   ;; Set the fixed pitch face
-  (set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 260)
+  (set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 200)
 
   ;; Set the variable pitch face
-  (set-face-attribute 'variable-pitch nil :font "Cantarell" :height 295 :weight 'regular)
+  (set-face-attribute 'variable-pitch nil :font "Cantarell" :height 210 :weight 'regular)
 
 #+end_src
 #+RESULTS:
-
 
 * Custom Keybinds
 
@@ -224,6 +223,12 @@
 
 ** Basic Setup
 #+begin_src emacs-lisp
+
+  ;; Make sure the ~/org/ directory exists:
+  (unless (file-exists-p "~/org/")
+    (make-directory "~/org/" t))   
+
+  
   (use-package vulpea)
   (use-package vulpea-journal
     :after (vulpea-ui)
@@ -245,7 +250,7 @@
 #+end_src
 
 #+RESULTS:
-: t
+| vulpea-journal |
 
 ** Templates
 #+begin_src emacs-lisp
@@ -261,7 +266,7 @@
            :file-name "daily/%Y-%m-%d.org"
            :title "%A, %B %d, %Y"
            :head "#+created: %<[%Y-%m-%d]>"
-           :body "%?")))
+           :body "* Notes\n")))
 
   ;; org capture
   (setq org-capture-templates

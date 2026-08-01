@@ -54,13 +54,13 @@
   :hook (prog-mode . rainbow-delimiters-mode))
 
 ;; Set default font
-(set-face-attribute 'default nil :font "Fira Code Retina" :height 280)
+(set-face-attribute 'default nil :font "Fira Code Retina" :height 200)
 
 ;; Set the fixed pitch face
-(set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 260)
+(set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 200)
 
 ;; Set the variable pitch face
-(set-face-attribute 'variable-pitch nil :font "Cantarell" :height 295 :weight 'regular)
+(set-face-attribute 'variable-pitch nil :font "Cantarell" :height 210 :weight 'regular)
 
 ;; Make ESC quit prompts
 (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
@@ -156,6 +156,11 @@
 
 (add-hook 'org-mode-hook (lambda () (add-hook 'after-save-hook #'efs/org-babel-tangle-config)))
 
+;; Make sure the ~/org/ directory exists:
+(unless (file-exists-p "~/org/")
+  (make-directory "~/org/" t))   
+
+
 (use-package vulpea)
 (use-package vulpea-journal
   :after (vulpea-ui)
@@ -185,7 +190,7 @@
          :file-name "daily/%Y-%m-%d.org"
          :title "%A, %B %d, %Y"
          :head "#+created: %<[%Y-%m-%d]>"
-         :body "%?")))
+         :body "* Notes\n")))
 
 ;; org capture
 (setq org-capture-templates
