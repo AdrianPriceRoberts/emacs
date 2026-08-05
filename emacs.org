@@ -261,39 +261,51 @@
 ** Templates
 #+begin_src emacs-lisp
 
-  ;; Default journal template
-  (use-package vulpea-journal
-    :after (vulpea vulpea-ui)
-    :config
-    (vulpea-journal-setup)
+    ;; Default journal template
+    (use-package vulpea-journal
+      :after (vulpea vulpea-ui)
+      :config
+      (vulpea-journal-setup)
 
-    (setq vulpea-journal-default-template
-          (vulpea-journal-template-daily
-           :file-name "daily/%Y-%m-%d.org"
-           :title "%A, %B %d, %Y"
-           :head "#+created: %<[%Y-%m-%d]>"
-           :body "* Notes\n")))
+      (setq vulpea-journal-default-template
+            (vulpea-journal-template-daily
+             :file-name "daily/%Y-%m-%d.org"
+             :title "%A, %B %d, %Y"
+             :head "#+created: %<[%Y-%m-%d]>"
+             :body "* Notes\n")))
 
-  ;; org capture
-  (setq org-capture-templates
-        '(("n" "Note" plain
+    ;; org capture
+    (setq org-capture-templates
+          '(("n" "Note" plain
+             (file (lambda ()
+                     (vulpea-note-path
+                      (vulpea-create "Quick Note"))))
+             "%?")
+            ("l" "Lab notebook entry" plain
+             (file (lambda ()
+                     (let ((title (read-string "Lab entry title: "))
+                           (page-id (read-string "Page ID: ")))
+                       (vulpea-note-path
+                        (vulpea-create
+                         title
+                         nil
+                         :tags '("lab")
+                         :properties `(("PAGE_ID" . ,page-id)
+                                       ("CREATED" . ,(format-time-string "[%Y-%m-%d]"))
+                                       ("ALIASES" . ,page-id))
+                        )))))
+             "* Notes\n%?"
+             :unnarrowed t)
+                      ("e" "Experiment" plain
            (file (lambda ()
-                   (vulpea-note-path
-                    (vulpea-create "Quick Note"))))
-           "%?")
-          ("l" "Lab notebook entry" plain
-           (file (lambda ()
-                   (let ((title (read-string "Lab entry title: "))
-                         (page-id (read-string "Page ID: ")))
+                   (let ((title (read-string "Experiment Title: ")))
                      (vulpea-note-path
                       (vulpea-create
                        title
                        nil
-                       :tags '("lab")
-                       :properties `(("PAGE_ID" . ,page-id)
-                                     ("CREATED" . ,(format-time-string "[%Y-%m-%d]"))
-                                     ("ALIASES" . ,page-id))
-                       :head "#+created: %<[%Y-%m-%d]>")))))
+                       :tags '("exp")
+                       :properties `(("CREATED" . ,(format-time-string "[%Y-%m-%d]")))
+                      )))))
            "* Notes\n%?"
            :unnarrowed t)))
   
@@ -301,8 +313,8 @@
 #+end_src
 
 #+RESULTS:
-| n | Note               | plain | (file (lambda nil (vulpea-note-path (vulpea-create Quick Note))))                                                                                                                                                                                                                                 | %?      |
-| l | Lab notebook entry | plain | (file (lambda nil (let ((title (read-string Lab entry title: )) (page-id (read-string Page ID: ))) (vulpea-note-path (vulpea-create title nil :tags '(lab) :properties `((PAGE_ID , page-id) (CREATED , (format-time-string [%Y-%m-%d])) (ALIASES , page-id)) :head #+created: %<[%Y-%m-%d]>))))) | * Notes |
+| n | Note               | plain | (file (lambda nil (vulpea-note-path (vulpea-create Quick Note))))                                                                                                                                                                                                  | %?      |
+| l | Lab notebook entry | plain | (file (lambda nil (let ((title (read-string Lab entry title: )) (page-id (read-string Page ID: ))) (vulpea-note-path (vulpea-create title nil :tags '(lab) :properties `((PAGE_ID , page-id) (CREATED , (format-time-string [%Y-%m-%d])) (ALIASES , page-id))))))) | * Notes |
 ** Vulpea UI
 #+begin_src emacs-lisp
 

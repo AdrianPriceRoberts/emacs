@@ -213,9 +213,21 @@
                      :properties `(("PAGE_ID" . ,page-id)
                                    ("CREATED" . ,(format-time-string "[%Y-%m-%d]"))
                                    ("ALIASES" . ,page-id))
-                     :head "#+created: %<[%Y-%m-%d]>")))))
+                    )))))
          "* Notes\n%?"
-         :unnarrowed t)))
+         :unnarrowed t)
+                  ("e" "Experiment" plain
+       (file (lambda ()
+               (let ((title (read-string "Experiment Title: ")))
+                 (vulpea-note-path
+                  (vulpea-create
+                   title
+                   nil
+                   :tags '("exp")
+                   :properties `(("CREATED" . ,(format-time-string "[%Y-%m-%d]")))
+                  )))))
+       "* Notes\n%?"
+       :unnarrowed t)))
 
 ;; Disable  unwanted widgets
 (use-package vulpea-ui
