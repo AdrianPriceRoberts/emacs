@@ -89,6 +89,12 @@
   (set-face-attribute 'variable-pitch nil :font "Cantarell" :height 150 :weight 'regular)
 
 #+end_src
+
+** WSL copy paste
+#+begin_src emacs-lisp
+(setq select-active-regions nil)
+#+end_src
+
 #+RESULTS:
 
 * Custom Keybinds
