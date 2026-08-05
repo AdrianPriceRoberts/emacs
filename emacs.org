@@ -80,13 +80,13 @@
 #+begin_src emacs-lisp
   
   ;; Set default font
-  (set-face-attribute 'default nil :font "Fira Code Retina" :height 200)
+  (set-face-attribute 'default nil :font "Fira Code Retina" :height 140)
 
   ;; Set the fixed pitch face
-  (set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 200)
+  (set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 140)
 
   ;; Set the variable pitch face
-  (set-face-attribute 'variable-pitch nil :font "Cantarell" :height 210 :weight 'regular)
+  (set-face-attribute 'variable-pitch nil :font "Cantarell" :height 150 :weight 'regular)
 
 #+end_src
 #+RESULTS:
@@ -317,6 +317,16 @@
 
 #+RESULTS:
 : ((nav . 50) (calendar . 150) (created-today . 350) (previous-years . 360))
+* Syncthing
+Automatically start syncthing in the background when emacs is started.
+#+begin_src emacs-lisp
+(add-hook 'after-init-hook
+          (lambda ()
+            (start-process "syncthing" "*syncthing-output" "syncthing" "-no-browser")))
+#+end_src
+
+#+RESULTS:
+| (lambda nil (start-process syncthing nil syncthing -no-console -no-browser)) | vulpea-journal |
 
 * Ivy
 #+begin_src emacs-lisp

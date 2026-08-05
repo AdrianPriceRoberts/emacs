@@ -54,13 +54,13 @@
   :hook (prog-mode . rainbow-delimiters-mode))
 
 ;; Set default font
-(set-face-attribute 'default nil :font "Fira Code Retina" :height 200)
+(set-face-attribute 'default nil :font "Fira Code Retina" :height 140)
 
 ;; Set the fixed pitch face
-(set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 200)
+(set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 140)
 
 ;; Set the variable pitch face
-(set-face-attribute 'variable-pitch nil :font "Cantarell" :height 210 :weight 'regular)
+(set-face-attribute 'variable-pitch nil :font "Cantarell" :height 150 :weight 'regular)
 
 ;; Make ESC quit prompts
 (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
@@ -227,6 +227,10 @@
    (calendar . 150)
    (created-today . 350)
    (previous-years . 360)))
+
+(add-hook 'after-init-hook
+          (lambda ()
+            (start-process "syncthing" "*syncthing-output" "syncthing" "-no-browser")))
 
 (use-package ivy
     :diminish
