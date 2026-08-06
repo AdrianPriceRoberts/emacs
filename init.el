@@ -35,9 +35,9 @@
 
 ;; Disable line numbers in some modes
 (dolist (mode '(org-mode-hook
-  	      term-mode-hook
-  	      eshell-mode-hook
-  	      shell-mode-hook))
+		term-mode-hook
+		eshell-mode-hook
+		shell-mode-hook))
 
   (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
@@ -53,14 +53,18 @@
 (use-package rainbow-delimiters
   :hook (prog-mode . rainbow-delimiters-mode))
 
+;; Scale the font by the display size. For example, for a 4k display, it is 2160/10 = font size 216
+(defun scaled-font-size()
+  (/ (x-display-pixel-height) 10))
+
 ;; Set default font
-(set-face-attribute 'default nil :font "Fira Code Retina" :height 140)
+(set-face-attribute 'default nil :font "Fira Code Retina" :height (scaled-font-size))
 
 ;; Set the fixed pitch face
-(set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height 140)
+(set-face-attribute 'fixed-pitch nil :font "Fira Code Retina" :height  (scaled-font-size))
 
 ;; Set the variable pitch face
-(set-face-attribute 'variable-pitch nil :font "Cantarell" :height 150 :weight 'regular)
+(set-face-attribute 'variable-pitch nil :font "Cantarell" :height  (scaled-font-size) :weight 'regular)
 
 (setq select-active-regions nil)
 
@@ -266,7 +270,7 @@
     (ivy-mode 1))
 
 
-
+  
 (use-package ivy-rich
   :init
   (ivy-rich-mode 1))
