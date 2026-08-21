@@ -1,3 +1,4 @@
+;; -*- lexical-binding: t; -*-
 ;; Initialize package sources
 (require 'package)
 
@@ -186,52 +187,71 @@
 (add-hook 'emacs-startup-hook #'vulpea-journal)
 
 ;; Default journal template
-(use-package vulpea-journal
-  :after (vulpea vulpea-ui)
-  :config
-  (vulpea-journal-setup)
+   (use-package vulpea-journal
+     :after (vulpea vulpea-ui)
+     :config
+     (vulpea-journal-setup)
 
-  (setq vulpea-journal-default-template
-        (vulpea-journal-template-daily
-         :file-name "daily/%Y-%m-%d.org"
-         :title "%A, %B %d, %Y"
-         :head "#+created: %<[%Y-%m-%d]>"
-         :body "* Notes\n")))
+     (setq vulpea-journal-default-template
+           (vulpea-journal-template-daily
+            :file-name "daily/%Y-%m-%d.org"
+            :title "%A, %B %d, %Y"
+            :head "#+created: %<[%Y-%m-%d]>"
+            :body "* Notes\n")))
 
-;; org capture
-(setq org-capture-templates
-      '(("n" "Note" plain
-         (file (lambda ()
-                 (vulpea-note-path
-                  (vulpea-create "Quick Note"))))
-         "%?")
-        ("l" "Lab notebook entry" plain
-         (file (lambda ()
-                 (let ((title (read-string "Lab entry title: "))
-                       (page-id (read-string "Page ID: ")))
-                   (vulpea-note-path
-                    (vulpea-create
-                     title
-                     nil
-                     :tags '("lab")
-                     :properties `(("PAGE_ID" . ,page-id)
-                                   ("CREATED" . ,(format-time-string "[%Y-%m-%d]"))
-                                   ("ALIASES" . ,page-id))
-                    )))))
-         "* Notes\n%?"
-         :unnarrowed t)
-                  ("e" "Experiment" plain
-       (file (lambda ()
-               (let ((title (read-string "Experiment Title: ")))
-                 (vulpea-note-path
-                  (vulpea-create
-                   title
-                   nil
-                   :tags '("exp")
-                   :properties `(("CREATED" . ,(format-time-string "[%Y-%m-%d]")))
-                  )))))
-       "* Notes\n%?"
-       :unnarrowed t)))
+   ;; Helper: build an org-capture `target' that prompts for a title,
+   ;; creates a vulpea note with the given tags, and always stamps CREATED.
+   ;; EXTRA-PROPERTIES, if given, is a zero-arg function returning an
+   ;; alist of additional properties (called once, at capture time).
+(cl-defun my/vulpea-capture-target (&key title-prompt (tags '()) extra-properties)
+  (lambda ()
+    (let* ((title (read-string title-prompt))
+           (extra (when extra-properties (funcall extra-properties)))
+           (defaults `(("CREATED" . ,(format-time-string "[%Y-%m-%d]"))
+                       ("ALIASES" . "")))
+           ;; keep every DEFAULTS entry whose key isn't already set by EXTRA
+           (props (append extra
+                           (seq-remove (lambda (kv) (assoc (car kv) extra))
+                                       defaults))))
+      (vulpea-note-path
+       (vulpea-create title nil :tags tags :properties props)))))
+
+
+   (setq org-capture-templates
+         `(("n" "Note" plain
+  (file ,(my/vulpea-capture-target :title-prompt "Quick Note Title: "))
+  "%?")
+
+           ("l" "Lab notebook entry" plain
+            (file ,(my/vulpea-capture-target
+                    :title-prompt "Lab entry title: "
+                    :tags '("lab")
+                    :extra-properties
+                    (lambda ()
+                      (let ((page-id (read-string "Page ID: ")))
+                        `(("PAGE_ID" . ,page-id)
+                          ("ALIASES" . ,page-id))))))
+            "* Notes\n%?"
+            :unnarrowed t)
+
+           ("e" "Experiment" plain
+            (file ,(my/vulpea-capture-target
+                    :title-prompt "Experiment Title: "
+                    :tags '("exp")))
+            "* Notes\n%?"
+            :unnarrowed t)
+
+             ("s" "Supplier" plain
+            (file ,(my/vulpea-capture-target
+                    :title-prompt "Supplier Name : "
+                    :tags '("supplier")
+                    :extra-properties
+                    (lambda ()
+                      (let ((parts-supplied (read-string "Parts Supplied : ")))
+                        `(("PARTS_SUPPLIED" . ,parts-supplied)
+                          ("ALIASES" . ,parts-supplied))))))
+            "* Notes\n%?"
+            :unnarrowed t)))
 
 ;; Disable  unwanted widgets
 (use-package vulpea-ui
