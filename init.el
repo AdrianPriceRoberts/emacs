@@ -164,6 +164,57 @@
 
 (add-hook 'org-mode-hook (lambda () (add-hook 'after-save-hook #'efs/org-babel-tangle-config)))
 
+(require 'org-attach)
+
+(setq org-directory (expand-file-name "~/org/"))
+(setq org-attach-id-dir (expand-file-name "attach/" org-directory))
+(setq org-attach-method 'cp)              ; copy, never move or symlink
+(setq org-attach-store-link-p 'attached)
+(setq org-attach-use-inheritance t)       ; sub-headings share the node's dir
+(setq org-startup-with-inline-images t)
+
+;; don't let org-roam index .org files you happen to attach
+(setq org-roam-file-exclude-regexp '("^attach/" "\\.stversions/"))
+
+
+;; The custom keybinds and functions to easily attach from windows WSL
+(defun ap/wslpath (path &optional to-windows)
+  (string-trim (shell-command-to-string
+                (format "wslpath %s %s" (if to-windows "-w" "-u")
+                        (shell-quote-argument path)))))
+
+(defun ap/org-attach-from-windows-clipboard ()
+  "Attach the file whose Windows path is on the Windows clipboard."
+  (interactive)
+  (let* ((raw (shell-command-to-string "powershell.exe -NoProfile -Command Get-Clipboard"))
+         (win (string-trim raw "[ \t\n\r\"]+" "[ \t\n\r\"]+"))
+         (file (ap/wslpath win)))
+    (unless (file-regular-p file)
+      (user-error "Not a file: %s" file))
+    (org-attach-attach file nil 'cp)
+    (insert (format "[[attachment:%s]]" (file-name-nondirectory file)))
+    (org-display-inline-images)))
+
+(defun ap/org-attach-clipboard-image ()
+  "Save the image on the Windows clipboard as an attachment and link it."
+  (interactive)
+  (let* ((name (format-time-string "clip-%Y%m%d-%H%M%S.png"))
+         (file (expand-file-name name (org-attach-dir 'create)))
+         (win  (ap/wslpath file t)))
+    (call-process
+     "powershell.exe" nil nil nil "-Sta" "-NoProfile" "-Command"
+     (format "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; \
+$i=[Windows.Forms.Clipboard]::GetImage(); if($null -eq $i){exit 1}; \
+$i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
+    (unless (file-exists-p file)
+      (user-error "No image on the Windows clipboard"))
+    (insert (format "[[attachment:%s]]" name))
+    (org-display-inline-images)))
+
+(with-eval-after-load 'org
+  (define-key org-mode-map (kbd "C-c C-x w") #'ap/org-attach-from-windows-clipboard)
+  (define-key org-mode-map (kbd "C-c C-x v") #'ap/org-attach-clipboard-image))
+
 ;; Make sure the ~/org/ directory exists:
 (unless (file-exists-p "~/org/")
   (make-directory "~/org/" t))   
