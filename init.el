@@ -36,9 +36,9 @@
 
 ;; Disable line numbers in some modes
 (dolist (mode '(org-mode-hook
-		term-mode-hook
-		eshell-mode-hook
-		shell-mode-hook))
+  	      term-mode-hook
+  	      eshell-mode-hook
+  	      shell-mode-hook))
 
   (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
@@ -56,7 +56,7 @@
 
 ;; Scale the font by the display size. For example, for a 4k display, it is 2160/10 = font size 216
 (defun scaled-font-size()
-  (/ (x-display-pixel-height) 10))
+  (/ (x-display-pixel-height) 8))
 
 ;; Set default font
 (set-face-attribute 'default nil :font "Fira Code Retina" :height (scaled-font-size))
@@ -78,7 +78,8 @@
 (general-define-key
  :prefix "C-c"
   "c" 'org-capture
-  "j" 'vulpea-journal)
+  "j" 'vulpea-journal
+  "f" 'vulpea-find)
 
 (use-package which-key
   :init (which-key-mode)
@@ -290,7 +291,7 @@
     (ivy-mode 1))
 
 
-  
+
 (use-package ivy-rich
   :init
   (ivy-rich-mode 1))

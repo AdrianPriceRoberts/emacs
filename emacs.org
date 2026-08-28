@@ -82,7 +82,7 @@
 
    ;; Scale the font by the display size. For example, for a 4k display, it is 2160/10 = font size 216
    (defun scaled-font-size()
-     (/ (x-display-pixel-height) 10))
+     (/ (x-display-pixel-height) 8))
 
    ;; Set default font
    (set-face-attribute 'default nil :font "Fira Code Retina" :height (scaled-font-size))
@@ -108,16 +108,17 @@
 
 #+begin_src emacs-lisp
 
-  ;; Make ESC quit prompts
-  (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
+    ;; Make ESC quit prompts
+    (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
 
-  ;; general is useful for defining custom keybindings
-  (use-package general)
+    ;; general is useful for defining custom keybindings
+    (use-package general)
 
-  (general-define-key
-   :prefix "C-c"
-    "c" 'org-capture
-    "j" 'vulpea-journal)
+    (general-define-key
+     :prefix "C-c"
+      "c" 'org-capture
+      "j" 'vulpea-journal
+      "f" 'vulpea-find)
 #+end_src
 
 #+RESULTS:
