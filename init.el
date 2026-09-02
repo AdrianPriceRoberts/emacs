@@ -39,9 +39,9 @@
 
 ;; Disable line numbers in some modes
 (dolist (mode '(org-mode-hook
-		term-mode-hook
-		eshell-mode-hook
-		shell-mode-hook))
+  	      term-mode-hook
+  	      eshell-mode-hook
+  	      shell-mode-hook))
 
   (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
@@ -82,7 +82,8 @@
  :prefix "C-c"
   "c" 'org-capture
   "j" 'vulpea-journal
-  "f" 'vulpea-find)
+  "f" 'vulpea-find
+  "i" 'vulpea-insert)
 
 (use-package which-key
   :init (which-key-mode)
@@ -345,7 +346,7 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
     (ivy-mode 1))
 
 
-  
+
 (use-package ivy-rich
   :init
   (ivy-rich-mode 1))

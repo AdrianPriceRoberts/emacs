@@ -114,17 +114,18 @@
 
 #+begin_src emacs-lisp
 
-    ;; Make ESC quit prompts
-    (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
+      ;; Make ESC quit prompts
+      (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
 
-    ;; general is useful for defining custom keybindings
-    (use-package general)
+      ;; general is useful for defining custom keybindings
+      (use-package general)
 
-    (general-define-key
-     :prefix "C-c"
-      "c" 'org-capture
-      "j" 'vulpea-journal
-      "f" 'vulpea-find)
+      (general-define-key
+       :prefix "C-c"
+        "c" 'org-capture
+        "j" 'vulpea-journal
+        "f" 'vulpea-find
+        "i" 'vulpea-insert)
 #+end_src
 
 #+RESULTS:
