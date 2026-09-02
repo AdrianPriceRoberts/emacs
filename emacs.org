@@ -24,6 +24,12 @@
 
 #+end_src
 
+* Version check
+#+begin_src emacs-lisp
+(when (< emacs-major-version 29)
+  (error "This config requires Emacs 29+, but you're running %s. Update Emacs before proceeding." emacs-version))
+#+end_src
+
 * Basic UI Configuration
 #+begin_src emacs-lisp
 

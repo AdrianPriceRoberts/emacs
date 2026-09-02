@@ -17,6 +17,9 @@
 (require 'use-package)
 (setq use-package-always-ensure t)
 
+(when (< emacs-major-version 29)
+  (error "This config requires Emacs 29+, but you're running %s. Update Emacs before proceeding." emacs-version))
+
 (setq inhibit-startup-message t)
 
   (scroll-bar-mode -1)        ; Disable visible scrollbar
@@ -36,9 +39,9 @@
 
 ;; Disable line numbers in some modes
 (dolist (mode '(org-mode-hook
-  	      term-mode-hook
-  	      eshell-mode-hook
-  	      shell-mode-hook))
+		term-mode-hook
+		eshell-mode-hook
+		shell-mode-hook))
 
   (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
@@ -342,7 +345,7 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
     (ivy-mode 1))
 
 
-
+  
 (use-package ivy-rich
   :init
   (ivy-rich-mode 1))
