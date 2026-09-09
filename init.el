@@ -275,7 +275,9 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 
    (setq org-capture-templates
          `(("n" "Note" plain
-  (file ,(my/vulpea-capture-target :title-prompt "Quick Note Title: "))
+  (file ,(my/vulpea-capture-target
+          :title-prompt "Quick Note Title: "
+          :tags '("")))
   "%?")
 
            ("l" "Lab notebook entry" plain
