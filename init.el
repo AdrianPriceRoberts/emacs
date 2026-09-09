@@ -392,3 +392,146 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   :ensure t
   :config
   (gcmh-mode 1))
+
+(require 'org-attach)
+
+;;; ---------------------------------------------------------------- helpers
+
+(defun ap/wslpath (path &optional to-windows)
+  "Convert PATH between WSL and Windows form.  Return nil on failure."
+  (with-temp-buffer
+    (when (zerop (call-process "wslpath" nil t nil
+                               (if to-windows "-w" "-u") path))
+      (string-trim (buffer-string)))))
+
+(defconst ap/org-attach--probe-script
+  (concat
+   "[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+   "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
+   "if ([Windows.Forms.Clipboard]::ContainsFileDropList()) "
+   "{ 'files'; [Windows.Forms.Clipboard]::GetFileDropList() | ForEach-Object { $_ } } "
+   "elseif ([Windows.Forms.Clipboard]::ContainsImage()) "
+   "{ $i=[Windows.Forms.Clipboard]::GetImage(); "
+   "if ($null -eq $i) { 'none' } "
+   "else { $i.Save('%s',[Drawing.Imaging.ImageFormat]::Png); 'image' } } "
+   "elseif ([Windows.Forms.Clipboard]::ContainsText()) "
+   "{ 'text'; [Windows.Forms.Clipboard]::GetText() } "
+   "else { 'none' }")
+  "PowerShell probe.  %s is a Windows path to save a clipboard bitmap to.
+Deliberately free of double quotes so it survives WSL interop argument
+passing.  Run under `powershell.exe' -Sta: the clipboard APIs need a
+single-threaded apartment, and pwsh 7 is MTA, where GetImage returns null.")
+
+(defun ap/org-attach--probe-clipboard (image-target)
+  "Inspect the Windows clipboard once, saving any bitmap to IMAGE-TARGET.
+Return (KIND . LINES), KIND one of `files', `image', `text', `none'."
+  (let* ((win (or (ap/wslpath image-target t)
+                  (user-error "wslpath could not map %s" image-target)))
+         (script (format ap/org-attach--probe-script
+                         (replace-regexp-in-string "'" "''" win)))
+         (coding-system-for-read 'utf-8-dos))
+    (with-temp-buffer
+      (unless (zerop (call-process "powershell.exe" nil t nil
+                                   "-NoProfile" "-NonInteractive" "-Sta"
+                                   "-Command" script))
+        (user-error "Clipboard probe failed: %s"
+                    (string-trim (buffer-string))))
+      (let ((lines (split-string (buffer-string) "\n" t "[ \t\r]+")))
+        (cons (intern (or (car lines) "none")) (cdr lines))))))
+
+(defun ap/org-attach--sanitize (name)
+  "Strip characters from NAME that Syncthing cannot write onto Windows peers."
+  (replace-regexp-in-string "[[:cntrl:]:*?\"<>|]" "_" name))
+
+(defun ap/org-attach--free-name (dir name)
+  "Return NAME, or NAME-1, NAME-2 ... so it does not exist in DIR."
+  (let* ((base (file-name-base name))
+         (ext (or (file-name-extension name t) ""))
+         (try name)
+         (n 0))
+    (while (file-exists-p (expand-file-name try dir))
+      (setq try (format "%s-%d%s" base (cl-incf n) ext)))
+    try))
+
+(defun ap/org-attach--place (src &optional rename)
+  "Attach SRC to the node at point, copying it.  Return the basename used.
+Never clobbers an existing attachment.  With RENAME, prompt for the name."
+  (let* ((dir (org-attach-dir-get-create))
+         (want (ap/org-attach--sanitize (file-name-nondirectory src)))
+         (want (if rename
+                   (ap/org-attach--sanitize
+                    (read-string "Attach as: " want))
+                 want))
+         (final (ap/org-attach--free-name dir want)))
+    (if (equal final want)
+        (org-attach-attach src nil 'cp)
+      ;; Stage under the free name so `org-attach-attach' still runs its
+      ;; hooks and adds the ATTACH tag, rather than hand-rolling the copy.
+      (let* ((stage (make-temp-file "org-attach-" t))
+             (staged (expand-file-name final stage)))
+        (unwind-protect
+            (progn (copy-file src staged)
+                   (org-attach-attach staged nil 'mv))
+          (delete-directory stage t))))
+    final))
+
+(defun ap/org-attach--resolve (s)
+  "Return an existing file named by string S, or nil."
+  (let ((s (string-trim s "[ \t\r\n\"']+" "[ \t\r\n\"']+")))
+    (cond
+     ((string-empty-p s) nil)
+     ((string-match-p "\\`\\([a-zA-Z]:\\|\\\\\\\\\\)" s)
+      (let ((p (ap/wslpath s))) (and p (file-regular-p p) p)))
+     ((file-regular-p (expand-file-name s)) (expand-file-name s))
+     (t nil))))
+
+;;; ---------------------------------------------------------------- command
+
+(defun ap/org-attach-clipboard (&optional rename)
+  "Attach whatever is on the Windows clipboard to the Org node at point.
+
+Handles, in priority order: files copied in Explorer, a bitmap image
+\(Win+Shift+S), or text naming an existing file (Copy as path).  Inserts
+an `attachment:' link for each.  With prefix RENAME, prompt for names."
+  (interactive "P")
+  (unless (derived-mode-p 'org-mode)
+    (user-error "Not in an Org buffer"))
+  (let* ((stage (make-temp-file "org-clip-" t))
+         (shot (expand-file-name
+                (format-time-string "clip-%Y%m%d-%H%M%S.png") stage))
+         names)
+    (unwind-protect
+        (pcase-let ((`(,kind . ,lines) (ap/org-attach--probe-clipboard shot)))
+          (pcase kind
+            ('files
+             (dolist (f lines)
+               (let ((p (ap/wslpath f)))
+                 (cond ((and p (file-regular-p p))
+                        (push (ap/org-attach--place p rename) names))
+                       ((and p (file-directory-p p))
+                        (message "Skipping directory: %s" f))))))
+            ('image
+             (unless (file-exists-p shot)
+               (user-error "Clipboard bitmap could not be saved"))
+             (push (ap/org-attach--place shot rename) names))
+            ('text
+             (let ((hits (delq nil (mapcar #'ap/org-attach--resolve lines))))
+               (unless hits
+                 (user-error "Clipboard text is not a path to an existing file: %s"
+                             (truncate-string-to-width
+                              (or (car lines) "") 60 nil nil t)))
+               (dolist (p hits) (push (ap/org-attach--place p rename) names))))
+            (_ (user-error "Clipboard is empty"))))
+      (delete-directory stage t))
+    (setq names (nreverse names))
+    (unless names (user-error "Nothing was attached"))
+    (when (org-at-heading-p) (org-end-of-meta-data t))
+    (insert (mapconcat (lambda (n) (format "[[attachment:%s]]" n)) names "\n")
+            "\n")
+    (org-display-inline-images)
+    (message "Attached %d file%s: %s"
+             (length names) (if (cdr names) "s" "")
+             (string-join names ", "))))
+
+(with-eval-after-load 'org
+  (define-key org-mode-map (kbd "C-c C-x v") #'ap/org-attach-clipboard))
