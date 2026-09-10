@@ -395,7 +395,7 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 
 (require 'org-attach)
 
-;;; ---------------------------------------------------------------- helpers
+   ;;; ---------------------------------------------------------------- helpers
 
 (defun ap/wslpath (path &optional to-windows)
   "Convert PATH between WSL and Windows form.  Return nil on failure."
@@ -403,6 +403,26 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
     (when (zerop (call-process "wslpath" nil t nil
                                (if to-windows "-w" "-u") path))
       (string-trim (buffer-string)))))
+
+
+(defcustom ap/org-attach-image-max-dimension 1920
+  "Longest edge, in pixels, for images pasted from the clipboard."
+  :type 'integer)
+
+(defcustom ap/org-attach-image-format 'auto
+  "Encoding for clipboard images.
+ `auto' picks JPEG for sources above `ap/org-attach-image-photo-pixels'
+ \(camera photos, full-screen grabs) and PNG below it (cropped
+ screenshots, diagrams), where lossless text matters."
+  :type '(choice (const auto) (const png) (const jpeg)))
+
+(defcustom ap/org-attach-image-photo-pixels 2000000
+  "Source pixel count above which `auto' format chooses JPEG."
+  :type 'integer)
+
+(defcustom ap/org-attach-image-jpeg-quality 85
+  "JPEG quality, 1-100."
+  :type 'integer)
 
 (defconst ap/org-attach--probe-script
   (concat
@@ -412,22 +432,53 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
    "{ 'files'; [Windows.Forms.Clipboard]::GetFileDropList() | ForEach-Object { $_ } } "
    "elseif ([Windows.Forms.Clipboard]::ContainsImage()) "
    "{ $i=[Windows.Forms.Clipboard]::GetImage(); "
-   "if ($null -eq $i) { 'none' } "
-   "else { $i.Save('%s',[Drawing.Imaging.ImageFormat]::Png); 'image' } } "
+   "if ($null -eq $i) { 'none' } else { "
+   "$max=%d; $mp=%d; $q=%d; $fmt='%s'; $base='%s'; "
+   "$src=$i.Width*$i.Height; "
+   "if ($i.Width -gt $max -or $i.Height -gt $max) { "
+   "$r=[Math]::Min($max/$i.Width,$max/$i.Height); "
+   "$w=[int]($i.Width*$r); $h=[int]($i.Height*$r); "
+   "$b=New-Object Drawing.Bitmap $w,$h; "
+   "$g=[Drawing.Graphics]::FromImage($b); "
+   "$g.InterpolationMode='HighQualityBicubic'; "
+   "$g.PixelOffsetMode='HighQuality'; $g.SmoothingMode='HighQuality'; "
+   "$g.DrawImage($i,0,0,$w,$h); $g.Dispose(); $i.Dispose(); $i=$b } "
+   "if ($fmt -eq 'auto') { if ($src -gt $mp) { $fmt='jpeg' } else { $fmt='png' } } "
+   "if ($fmt -eq 'jpeg') { "
+   "$flat=New-Object Drawing.Bitmap $i.Width,$i.Height; "
+   "$g2=[Drawing.Graphics]::FromImage($flat); "
+   "$g2.Clear([Drawing.Color]::White); "
+   "$g2.DrawImage($i,0,0,$i.Width,$i.Height); $g2.Dispose(); "
+   "$ec=[Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | "
+   "Where-Object { $_.MimeType -eq 'image/jpeg' }; "
+   "$ep=New-Object Drawing.Imaging.EncoderParameters 1; "
+   "$ep.Param[0]=New-Object Drawing.Imaging.EncoderParameter "
+   "([Drawing.Imaging.Encoder]::Quality),([int64]$q); "
+   "$out=$base + '.jpg'; $flat.Save($out,$ec,$ep) } "
+   "else { $out=$base + '.png'; "
+   "$i.Save($out,[Drawing.Imaging.ImageFormat]::Png) } "
+   "'image'; $out } } "
    "elseif ([Windows.Forms.Clipboard]::ContainsText()) "
    "{ 'text'; [Windows.Forms.Clipboard]::GetText() } "
    "else { 'none' }")
-  "PowerShell probe.  %s is a Windows path to save a clipboard bitmap to.
-Deliberately free of double quotes so it survives WSL interop argument
-passing.  Run under `powershell.exe' -Sta: the clipboard APIs need a
-single-threaded apartment, and pwsh 7 is MTA, where GetImage returns null.")
+  "Clipboard probe.  Format args: max edge, photo threshold, JPEG
+ quality, format name, and an EXTENSIONLESS Windows base path  the
+ script picks the extension and echoes the path it actually wrote.
+ Deliberately free of double quotes so it survives WSL interop.
+ Run under `powershell.exe' -Sta; pwsh 7 is MTA and GetImage
+ returns null there.")
 
-(defun ap/org-attach--probe-clipboard (image-target)
-  "Inspect the Windows clipboard once, saving any bitmap to IMAGE-TARGET.
-Return (KIND . LINES), KIND one of `files', `image', `text', `none'."
-  (let* ((win (or (ap/wslpath image-target t)
-                  (user-error "wslpath could not map %s" image-target)))
+(defun ap/org-attach--probe-clipboard (image-base)
+  "Inspect the Windows clipboard once, writing any bitmap near IMAGE-BASE.
+ IMAGE-BASE has no extension.  Return (KIND . LINES); for `image',
+ the single line is the Windows path actually written."
+  (let* ((win (or (ap/wslpath image-base t)
+                  (user-error "wslpath could not map %s" image-base)))
          (script (format ap/org-attach--probe-script
+                         ap/org-attach-image-max-dimension
+                         ap/org-attach-image-photo-pixels
+                         ap/org-attach-image-jpeg-quality
+                         (symbol-name ap/org-attach-image-format)
                          (replace-regexp-in-string "'" "''" win)))
          (coding-system-for-read 'utf-8-dos))
     (with-temp-buffer
@@ -438,6 +489,7 @@ Return (KIND . LINES), KIND one of `files', `image', `text', `none'."
                     (string-trim (buffer-string))))
       (let ((lines (split-string (buffer-string) "\n" t "[ \t\r]+")))
         (cons (intern (or (car lines) "none")) (cdr lines))))))
+
 
 (defun ap/org-attach--sanitize (name)
   "Strip characters from NAME that Syncthing cannot write onto Windows peers."
@@ -455,7 +507,7 @@ Return (KIND . LINES), KIND one of `files', `image', `text', `none'."
 
 (defun ap/org-attach--place (src &optional rename)
   "Attach SRC to the node at point, copying it.  Return the basename used.
-Never clobbers an existing attachment.  With RENAME, prompt for the name."
+   Never clobbers an existing attachment.  With RENAME, prompt for the name."
   (let* ((dir (org-attach-dir-get-create))
          (want (ap/org-attach--sanitize (file-name-nondirectory src)))
          (want (if rename
@@ -485,20 +537,20 @@ Never clobbers an existing attachment.  With RENAME, prompt for the name."
      ((file-regular-p (expand-file-name s)) (expand-file-name s))
      (t nil))))
 
-;;; ---------------------------------------------------------------- command
+   ;;; ---------------------------------------------------------------- command
 
 (defun ap/org-attach-clipboard (&optional rename)
   "Attach whatever is on the Windows clipboard to the Org node at point.
 
-Handles, in priority order: files copied in Explorer, a bitmap image
-\(Win+Shift+S), or text naming an existing file (Copy as path).  Inserts
-an `attachment:' link for each.  With prefix RENAME, prompt for names."
+   Handles, in priority order: files copied in Explorer, a bitmap image
+   \(Win+Shift+S), or text naming an existing file (Copy as path).  Inserts
+   an `attachment:' link for each.  With prefix RENAME, prompt for names."
   (interactive "P")
   (unless (derived-mode-p 'org-mode)
     (user-error "Not in an Org buffer"))
   (let* ((stage (make-temp-file "org-clip-" t))
-         (shot (expand-file-name
-                (format-time-string "clip-%Y%m%d-%H%M%S.png") stage))
+         (shot (expand-file-name                       ; no extension now
+                (format-time-string "clip-%Y%m%d-%H%M%S") stage))
          names)
     (unwind-protect
         (pcase-let ((`(,kind . ,lines) (ap/org-attach--probe-clipboard shot)))
@@ -510,10 +562,15 @@ an `attachment:' link for each.  With prefix RENAME, prompt for names."
                         (push (ap/org-attach--place p rename) names))
                        ((and p (file-directory-p p))
                         (message "Skipping directory: %s" f))))))
+
             ('image
-             (unless (file-exists-p shot)
-               (user-error "Clipboard bitmap could not be saved"))
-             (push (ap/org-attach--place shot rename) names))
+             (let ((saved (and lines (ap/wslpath (car lines)))))
+               (unless (and saved (file-regular-p saved))
+                 (user-error "Clipboard bitmap could not be saved"))
+               (push (ap/org-attach--place saved rename) names)))
+
+
+
             ('text
              (let ((hits (delq nil (mapcar #'ap/org-attach--resolve lines))))
                (unless hits
@@ -535,3 +592,13 @@ an `attachment:' link for each.  With prefix RENAME, prompt for names."
 
 (with-eval-after-load 'org
   (define-key org-mode-map (kbd "C-c v") #'ap/org-attach-clipboard))
+
+;; Inline images in Org buffers: 600px unless the block says otherwise.
+;; List form = honour #+ATTR_ORG :width, fall back to 600.
+(setq org-image-actual-width '(600))
+
+;; Opening an attachment in image-mode: fit it, and stop WSLg's
+;; auto HiDPI factor from quadrupling the surface.
+(setq image-auto-resize 'fit-window
+      image-auto-resize-on-window-resize 1
+      image-scaling-factor 1.0)
