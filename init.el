@@ -534,4 +534,4 @@ an `attachment:' link for each.  With prefix RENAME, prompt for names."
              (string-join names ", "))))
 
 (with-eval-after-load 'org
-  (define-key org-mode-map (kbd "C-c C-x v") #'ap/org-attach-clipboard))
+  (define-key org-mode-map (kbd "C-c v") #'ap/org-attach-clipboard))
