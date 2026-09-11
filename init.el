@@ -72,6 +72,11 @@
 
 (setq select-active-regions nil)
 
+(defun my-org-insert-current-datetime ()
+  "Insert an active timestamp with the current date and time."
+  (interactive)
+  (org-insert-time-stamp (current-time) t))
+
 ;; Make ESC quit prompts
 (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
 
@@ -83,7 +88,8 @@
   "c" 'org-capture
   "j" 'vulpea-journal
   "f" 'vulpea-find
-  "i" 'vulpea-insert)
+  "i" 'vulpea-insert
+  "t" 'my-org-insert-current-datetime)
 
 (use-package which-key
   :init (which-key-mode)
