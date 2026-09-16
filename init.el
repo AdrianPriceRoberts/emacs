@@ -90,8 +90,6 @@
   "f" 'vulpea-find
   "i" 'vulpea-insert
   "t" 'my-org-insert-current-datetime
-  "n" 'my/lab-notebook-next-page
-  "p" 'my/lab-notebook-previous-page
   "l" 'my/lab-notebook-list)
 
 (use-package which-key
@@ -386,16 +384,56 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   (interactive)
   (my/lab-notebook--goto -1))
 
+;; Minor mode: fast C-c n / C-c p, scoped to lab notebook buffers only ---
+;;
+;; C-c p is also projectile's command-map prefix. Rather than avoid "p"
+;; globally, this minor mode's keymap is registered in
+;; `emulation-mode-map-alists', which Emacs consults before ordinary
+;; minor-mode keymaps (including projectile-mode's), so C-c n/C-c p always
+;; mean "next/previous page" here regardless of load order -- and are
+;; simply inert everywhere else, where projectile's C-c p is untouched.
+
+(defvar lab-notebook-entry-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c n") #'my/lab-notebook-next-page)
+    (define-key map (kbd "C-c p") #'my/lab-notebook-previous-page)
+    map)
+  "Keymap for `lab-notebook-entry-mode'.")
+
+(define-minor-mode lab-notebook-entry-mode
+  "Minor mode with fast navigation keys for a lab notebook entry."
+  :lighter " Lab"
+  :keymap lab-notebook-entry-mode-map)
+
+(add-to-list 'emulation-mode-map-alists
+             `((lab-notebook-entry-mode . ,lab-notebook-entry-mode-map)))
+
+(defun my/lab-notebook-entry-mode-maybe-enable ()
+  (when (org-entry-get (point-min) "PAGE_ID")
+    (lab-notebook-entry-mode 1)))
+
+(add-hook 'org-mode-hook #'my/lab-notebook-entry-mode-maybe-enable)
+
 ;; Tabulated overview buffer -------------------------------------------
 
+(defvar-local lab-notebook-list--filter nil
+  "Substring filter (matched against Page ID or Title), or nil for none.")
+
 (defun my/lab-notebook-list--entries ()
-  (mapcar
-   (lambda (note)
-     (list (vulpea-note-path note)
-           (vector (or (my/lab-notebook--page-id note) "")
-                   (or (alist-get "CREATED" (vulpea-note-properties note) nil nil #'string=) "")
-                   (vulpea-note-title note))))
-   (my/lab-notebook--notes)))
+  (let ((filter lab-notebook-list--filter))
+    (seq-keep
+     (lambda (note)
+       (let* ((page-id (or (my/lab-notebook--page-id note) ""))
+              (created (or (alist-get "CREATED" (vulpea-note-properties note) nil nil #'string=) ""))
+              (title (or (vulpea-note-title note) "")))
+         (when (or (not filter)
+                   (string-match-p (regexp-quote filter) page-id)
+                   (string-match-p (regexp-quote filter) title))
+           (list (vulpea-note-path note)
+                 (vector (propertize page-id 'face 'font-lock-keyword-face)
+                         (propertize created 'face 'font-lock-comment-face)
+                         title)))))
+     (my/lab-notebook--notes))))
 
 (define-derived-mode lab-notebook-list-mode tabulated-list-mode "Lab-Notebook"
   "Major mode listing all lab notebook entries."
@@ -409,7 +447,31 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   (let ((path (tabulated-list-get-id)))
     (when path (find-file path))))
 
+(defun lab-notebook-list-sort-by-column ()
+  "Prompt for a column and sort the table by it (repeat to flip direction)."
+  (interactive)
+  (let* ((names (mapcar #'car (append tabulated-list-format nil)))
+         (name (completing-read "Sort by: " names nil t))
+         (col (seq-position names name)))
+    (tabulated-list-sort col)))
+
+(defun lab-notebook-list-set-filter (filter)
+  "Filter the table to entries whose Page ID or Title contains FILTER."
+  (interactive
+   (list (read-string "Filter (Page ID/Title substring, empty to clear): "
+                       lab-notebook-list--filter)))
+  (setq lab-notebook-list--filter (unless (string-empty-p filter) filter))
+  (tabulated-list-print t))
+
+(defun lab-notebook-list-clear-filter ()
+  (interactive)
+  (setq lab-notebook-list--filter nil)
+  (tabulated-list-print t))
+
 (define-key lab-notebook-list-mode-map (kbd "RET") #'lab-notebook-list-visit)
+(define-key lab-notebook-list-mode-map (kbd "s") #'lab-notebook-list-sort-by-column)
+(define-key lab-notebook-list-mode-map (kbd "/") #'lab-notebook-list-set-filter)
+(define-key lab-notebook-list-mode-map (kbd "c") #'lab-notebook-list-clear-filter)
 
 (defun my/lab-notebook-list ()
   (interactive)
