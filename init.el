@@ -89,7 +89,10 @@
   "j" 'vulpea-journal
   "f" 'vulpea-find
   "i" 'vulpea-insert
-  "t" 'my-org-insert-current-datetime)
+  "t" 'my-org-insert-current-datetime
+  "n" 'my/lab-notebook-next-page
+  "p" 'my/lab-notebook-previous-page
+  "l" 'my/lab-notebook-list)
 
 (use-package which-key
   :init (which-key-mode)
@@ -330,9 +333,128 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
    (created-today . 350)
    (previous-years . 360)))
 
+;; Shared helpers -----------------------------------------------------
+
+(defun my/lab-notebook--notes ()
+  "All vulpea notes tagged \"lab\"."
+  (vulpea-db-query-by-tags-some '("lab")))
+
+(defun my/lab-notebook--page-id (note)
+  (alist-get "PAGE_ID" (vulpea-note-properties note) nil nil #'string=))
+
+(defun my/lab-notebook--parse-page-id (page-id)
+  "Split PAGE-ID into (INITIALS BOOK-NUM PAGE-NUM), or nil if it doesn't match."
+  (when (and page-id
+             (string-match "\\`\\([A-Za-z]+\\)\\([0-9]\\)\\([0-9][0-9][0-9]\\)\\'" page-id))
+    (list (match-string 1 page-id)
+          (string-to-number (match-string 2 page-id))
+          (string-to-number (match-string 3 page-id)))))
+
+;; Next / previous page navigation ------------------------------------
+
+(defun my/lab-notebook--notebook-notes (initials book)
+  "(PAGE-NUM . NOTE) pairs for INITIALS/BOOK, ascending by page number."
+  (let (result)
+    (dolist (note (my/lab-notebook--notes))
+      (let ((parsed (my/lab-notebook--parse-page-id (my/lab-notebook--page-id note))))
+        (when (and parsed (string= (nth 0 parsed) initials) (= (nth 1 parsed) book))
+          (push (cons (nth 2 parsed) note) result))))
+    (sort result (lambda (a b) (< (car a) (car b))))))
+
+(defun my/lab-notebook--goto (direction)
+  (let* ((current-id (org-entry-get (point-min) "PAGE_ID"))
+         (parsed (and current-id (my/lab-notebook--parse-page-id current-id))))
+    (unless parsed
+      (user-error "Not a lab notebook entry (no PAGE_ID property found)"))
+    (cl-destructuring-bind (initials book page) parsed
+      (let* ((immediate-page (+ page direction))
+             (immediate-id (format "%s%d%03d" initials book immediate-page))
+             (candidates (my/lab-notebook--notebook-notes initials book))
+             (target (if (> direction 0)
+                         (seq-find (lambda (c) (> (car c) page)) candidates)
+                       (car (last (seq-filter (lambda (c) (< (car c) page)) candidates))))))
+        (when (or (not target) (/= (car target) immediate-page))
+          (message "No entry found for %s" immediate-id))
+        (when target
+          (find-file (vulpea-note-path (cdr target))))))))
+
+(defun my/lab-notebook-next-page ()
+  (interactive)
+  (my/lab-notebook--goto 1))
+
+(defun my/lab-notebook-previous-page ()
+  (interactive)
+  (my/lab-notebook--goto -1))
+
+;; Tabulated overview buffer -------------------------------------------
+
+(defun my/lab-notebook-list--entries ()
+  (mapcar
+   (lambda (note)
+     (list (vulpea-note-path note)
+           (vector (or (my/lab-notebook--page-id note) "")
+                   (or (alist-get "CREATED" (vulpea-note-properties note) nil nil #'string=) "")
+                   (vulpea-note-title note))))
+   (my/lab-notebook--notes)))
+
+(define-derived-mode lab-notebook-list-mode tabulated-list-mode "Lab-Notebook"
+  "Major mode listing all lab notebook entries."
+  (setq tabulated-list-format [("Page ID" 12 t) ("Date" 12 t) ("Title" 0 t)])
+  (setq tabulated-list-sort-key (cons "Page ID" nil))
+  (setq tabulated-list-entries #'my/lab-notebook-list--entries)
+  (tabulated-list-init-header))
+
+(defun lab-notebook-list-visit ()
+  (interactive)
+  (let ((path (tabulated-list-get-id)))
+    (when path (find-file path))))
+
+(define-key lab-notebook-list-mode-map (kbd "RET") #'lab-notebook-list-visit)
+
+(defun my/lab-notebook-list ()
+  (interactive)
+  (let ((buf (get-buffer-create "*Lab Notebook*")))
+    (with-current-buffer buf
+      (lab-notebook-list-mode)
+      (tabulated-list-print t))
+    (switch-to-buffer buf)))
+
 (add-hook 'after-init-hook
           (lambda ()
             (start-process "syncthing" "*syncthing-output" "syncthing" "-no-browser")))
+
+(setq make-backup-files t
+      backup-by-copying t
+      version-control t
+      delete-old-versions t
+      kept-new-versions 20
+      kept-old-versions 5
+      backup-directory-alist '(("." . "~/.emacs.d/backups")))
+
+(defun my/guard-empty-overwrite (fn &rest args)
+  (when (and (buffer-file-name)
+             (file-exists-p (buffer-file-name))
+             (= (buffer-size) 0)
+             (> (file-attribute-size (file-attributes (buffer-file-name))) 0))
+    (unless (yes-or-no-p
+             (format "Buffer for %s is EMPTY but disk file has content. Save anyway? "
+                     (buffer-file-name)))
+      (user-error "Aborted: buffer empty, disk file is not")))
+  (apply fn args))
+(advice-add 'save-buffer :around #'my/guard-empty-overwrite)
+
+(defun my/diff-before-supersession-prompt (fn &rest args)
+  (when (buffer-file-name)
+    (diff-buffer-with-file (current-buffer))
+    (when-let ((win (get-buffer-window "*Diff*")))
+      (select-window win)))
+  (apply fn args))
+(advice-add 'ask-user-about-supersession-threat
+            :around #'my/diff-before-supersession-prompt)
+
+(global-auto-revert-mode 1)
+(setq auto-revert-avoid-polling-method 'watch
+      auto-revert-verbose nil)
 
 (use-package ivy
     :diminish

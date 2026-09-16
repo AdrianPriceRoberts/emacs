@@ -476,7 +476,7 @@
       (sort result (lambda (a b) (< (car a) (car b))))))
 
   (defun my/lab-notebook--goto (direction)
-    (let* ((current-id (vulpea-buffer-prop-get "PAGE_ID"))
+    (let* ((current-id (org-entry-get (point-min) "PAGE_ID"))
            (parsed (and current-id (my/lab-notebook--parse-page-id current-id))))
       (unless parsed
         (user-error "Not a lab notebook entry (no PAGE_ID property found)"))
