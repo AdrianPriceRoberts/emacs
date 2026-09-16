@@ -451,6 +451,71 @@ Automatically start syncthing in the background when emacs is started.
 #+RESULTS:
 | (lambda nil (start-process syncthing nil syncthing -no-console -no-browser)) | vulpea-journal |
 
+* File Sync Safety
+Syncthing can update a file on disk while it's open in an Emacs buffer on
+another machine. When that happens and you try to save, Emacs shows a plain
+y/n/revert prompt with no indication of what's actually different, which can
+lead to accidentally saving an empty/stale buffer over a file with real
+content. These settings add a safety net and make the prompt understandable.
+
+** Backups
+Keep numbered backups of every file before it's overwritten, so an accidental
+bad save (e.g. an empty buffer clobbering real content) is always recoverable
+from =~/.emacs.d/backups=.
+#+begin_src emacs-lisp
+(setq make-backup-files t
+      backup-by-copying t
+      version-control t
+      delete-old-versions t
+      kept-new-versions 20
+      kept-old-versions 5
+      backup-directory-alist '(("." . "~/.emacs.d/backups")))
+#+end_src
+
+** Empty-file overwrite guard
+Refuse to silently save an empty buffer over a file on disk that has content;
+ask for explicit confirmation first.
+#+begin_src emacs-lisp
+(defun my/guard-empty-overwrite (fn &rest args)
+  (when (and (buffer-file-name)
+             (file-exists-p (buffer-file-name))
+             (= (buffer-size) 0)
+             (> (file-attribute-size (file-attributes (buffer-file-name))) 0))
+    (unless (yes-or-no-p
+             (format "Buffer for %s is EMPTY but disk file has content. Save anyway? "
+                     (buffer-file-name)))
+      (user-error "Aborted: buffer empty, disk file is not")))
+  (apply fn args))
+(advice-add 'save-buffer :around #'my/guard-empty-overwrite)
+#+end_src
+
+** Diff before supersession prompt
+When a file changed on disk since it was visited, show a diff between the
+buffer and the file on disk before asking whether to keep the buffer, keep
+the disk version, or revert. The =*Diff*= buffer labels the disk file with
+=---= and the buffer with =+++=, so it's clear which side is which.
+#+begin_src emacs-lisp
+(defun my/diff-before-supersession-prompt (fn &rest args)
+  (when (buffer-file-name)
+    (diff-buffer-with-file (current-buffer))
+    (when-let ((win (get-buffer-window "*Diff*")))
+      (select-window win)))
+  (apply fn args))
+(advice-add 'ask-user-about-supersession-threat
+            :around #'my/diff-before-supersession-prompt)
+#+end_src
+
+** Auto Revert
+Keep unmodified buffers automatically refreshed from disk (using file-watch
+notifications) so a buffer is less likely to go stale and trigger the
+supersession prompt in the first place. Emacs will not auto-revert a buffer
+that has unsaved edits.
+#+begin_src emacs-lisp
+(global-auto-revert-mode 1)
+(setq auto-revert-avoid-polling-method 'watch
+      auto-revert-verbose nil)
+#+end_src
+
 * Ivy
 #+begin_src emacs-lisp
 
