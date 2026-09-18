@@ -489,6 +489,19 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
                (list (car row) (apply #'vector cols))))))
        rows))))
 
+;; Shared with *Bibliography*: show HINT in the echo area once idle,
+;; via eldoc rather than a header-line splice (low-contrast by default,
+;; and not where anyone looks) or a hand-rolled timer (would fight
+;; whatever message a recent command just printed). eldoc already
+;; handles "wait until idle, don't clobber an active message or
+;; minibuffer, refresh automatically" -- exactly what's wanted here.
+(defun my/tabulated-list-eldoc-setup (hint)
+  (setq-local eldoc-idle-delay 1.5)
+  (add-hook 'eldoc-documentation-functions
+            (lambda (callback &rest _) (funcall callback hint))
+            nil t)
+  (eldoc-mode 1))
+
 (defvar-local lab-notebook-list--filter nil
   "Nil, or (COLUMN-INDEX-OR-NIL . TEXT); nil index means any column.")
 
@@ -520,13 +533,7 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   (setq tabulated-list-sort-key (cons "Date" t)) ; most recent first
   (setq tabulated-list-entries #'my/lab-notebook-list--entries)
   (tabulated-list-init-header)
-  ;; doom-modeline manages `mode-line-format' dynamically and overwrites
-  ;; anything appended there; the header line is untouched by it, so the
-  ;; hint goes there instead, after the column titles.
-  (setq header-line-format
-        (append header-line-format
-                (list "  " (propertize "[s]ort [/]filter [c]lear [g]refresh [RET]open"
-                                        'face 'font-lock-comment-face)))))
+  (my/tabulated-list-eldoc-setup "s:sort  /:filter  c:clear  g:refresh  RET:open"))
 
 (defun lab-notebook-list-visit ()
   (interactive)
@@ -1013,12 +1020,7 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   (setq tabulated-list-sort-key (cons "Year" t)) ; most recent first
   (setq tabulated-list-entries #'my/bibliography-list--entries)
   (tabulated-list-init-header)
-  ;; See the matching comment in `lab-notebook-list-mode': doom-modeline
-  ;; overwrites mode-line-format, so the hint goes in the header line.
-  (setq header-line-format
-        (append header-line-format
-                (list "  " (propertize "[s]ort [/]filter [c]lear [g]refresh [RET]note [o]pdf"
-                                        'face 'font-lock-comment-face)))))
+  (my/tabulated-list-eldoc-setup "s:sort  /:filter  c:clear  g:refresh  RET:note  o:pdf"))
 
 (defun bibliography-list-visit ()
   "Open (or create) the reference note for the entry at point."
