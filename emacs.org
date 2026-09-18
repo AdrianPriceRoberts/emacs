@@ -724,6 +724,24 @@ that has unsaved edits.
   (setq ivy-initial-inputs-alist nil)) ;; Don't start searches with ^
 
 #+end_src
+* Ivy Prescient
+Out-of-order character-fuzzy matching (e.g. "smh" matches "Smith") plus
+frecency-based ranking (recently/frequently picked candidates sort higher),
+for every Ivy/Counsel-backed command at once: =M-x=, find-file,
+=counsel-ibuffer=, swiper, =vulpea-find=, =vulpea-insert=, and citar's
+pickers all get this for free since they all go through Ivy's
+=completing-read=.
+#+begin_src emacs-lisp
+  (use-package prescient
+    :config
+    (setq prescient-filter-method '(literal fuzzy))
+    (prescient-persist-mode 1))
+
+  (use-package ivy-prescient
+    :after (ivy counsel)
+    :config
+    (ivy-prescient-mode 1))
+#+end_src
 * Helpful
 #+begin_src emacs-lisp
 
@@ -985,3 +1003,246 @@ use gcmh to have a higher garbage collection threshold. Needed to make org-captu
         image-scaling-factor 1.0)
 
 #+end_src
+* Citations (Zotero / org-cite / citar)
+
+Bibliography data comes from Zotero, managed with Better BibTeX, which keeps
+a =.bib= file auto-exported directly into this WSL filesystem (via a
+=\\wsl.localhost\...= UNC path from Windows), landing under =~/org/biblio/=
+where Syncthing already carries it to every other machine -- no separate
+sync mechanism needed for the citation text itself.
+
+PDFs come from ZotMoov, which renames Zotero attachments to
+=<citekey>.pdf= in a folder inside the uWaterloo (school) OneDrive account,
+already kept in sync across every machine independently of whether Zotero
+itself is installed there.
+
+Notes on individual papers are plain Vulpea notes, one per citekey, under
+=~/org/references/= -- so they're searchable via the existing
+=vulpea-find=/=vulpea-insert= and linkable via =[[id:...]]= like any other
+note, with no separate integration code required for that half of the
+workflow.
+
+Caveat worth knowing: citar's rich multi-column picker (author | title |
+year | tags, with note/file indicator icons) is built on Emacs's
+=affixation-function= completion API, which Vertico renders natively but
+which citar has no special-cased support for under Ivy. In practice the
+picker will work and remain fully searchable, but may render as a flatter,
+less-aligned line rather than the neat columns in citar's screenshots --
+not a functional problem, just a cosmetic one to expect.
+
+** Zotero / Better BibTeX / ZotMoov setup (manual, outside Emacs)
+
+1. Zotero -> Preferences -> Better BibTeX -> Citekey Format: pick a stable
+   format (the default author+year style is fine). This is Zotero-account
+   level, so it's automatically consistent across every machine running
+   Zotero -- no per-machine concern here.
+2. Right-click the library -> Export Library -> "Better BibLaTeX" -> check
+   "Keep updated" -> save to the WSL UNC path for the machine running
+   Zotero, e.g. =\\wsl.localhost\Ubuntu\home\<user>\org\biblio\library.bib=
+   (create =biblio/= and =references/= under =~/org/= first, if the elisp
+   below hasn't already run once). Better BibTeX -> Preferences -> Export:
+   keep file-path export *relative*, not absolute, since other machines
+   read this same file via Syncthing.
+3. ZotMoov: target directory = a folder inside the *uWaterloo* OneDrive
+   (flat, no per-collection subfolders) -- not the personal OneDrive.
+   Rename pattern using its ={{citationKey}}= variable, e.g.
+   ={{citationKey}}.pdf=. Spot-check a few renamed files after setup --
+   ZotMoov's citekey renaming has known rough edges upstream (stale
+   filename after a citekey later changes).
+
+** Directories and per-machine paths
+#+begin_src emacs-lisp
+  (defvar my/biblio-dir (expand-file-name "biblio/" org-directory))
+  (defvar my/reference-notes-dir (expand-file-name "references/" org-directory))
+  (defvar my/biblio-file (expand-file-name "library.bib" my/biblio-dir))
+
+  (dolist (d (list my/biblio-dir my/reference-notes-dir))
+    (unless (file-exists-p d) (make-directory d t)))
+
+  ;; Resolve the uWaterloo (work/school) OneDrive specifically --
+  ;; %OneDriveCommercial% names it by account type, unlike plain
+  ;; %OneDrive%, which just points at whichever account was set up
+  ;; first/primary and isn't guaranteed to be the uWaterloo one or to
+  ;; agree across machines. Uses powershell.exe, not cmd.exe: cmd.exe
+  ;; refuses a WSL UNC working directory and prints a warning onto
+  ;; stdout ("UNC paths are not supported...") that corrupts the
+  ;; captured value; powershell.exe (already used elsewhere in this
+  ;; file for clipboard interop) doesn't have that problem.
+  (defun ap/onedrive-root ()
+    "Local WSL path to the uWaterloo OneDrive root, or nil if unresolved."
+    (let ((raw (string-trim
+                (shell-command-to-string
+                 "powershell.exe -NoProfile -Command \"[Environment]::GetEnvironmentVariable('OneDriveCommercial')\""))))
+      (unless (string-empty-p raw) (ap/wslpath raw))))
+#+end_src
+
+** citar + org-cite
+#+begin_src emacs-lisp
+  (use-package citar
+    :custom
+    (citar-bibliography (list my/biblio-file))
+    (org-cite-global-bibliography (list my/biblio-file))
+    (citar-library-paths (list (expand-file-name "zotero-pdfs/" (ap/onedrive-root))))
+    (citar-notes-paths (list my/reference-notes-dir))
+    (org-cite-insert-processor 'citar)
+    (org-cite-follow-processor 'citar)
+    (org-cite-activate-processor 'citar)
+    :hook
+    (LaTeX-mode . citar-capf-setup)
+    (org-mode . citar-capf-setup)
+    :config
+    ;; citar's default note-creation formatter (citar-org-format-note-default)
+    ;; only adds an org-id when it detects an org-roam buffer, which Vulpea
+    ;; never is -- so reference notes need their own formatter to get an ID,
+    ;; CREATED, and a tag, matching how every other Vulpea note is built
+    ;; (see `my/vulpea-capture-target' above).
+    (defun my/citar-format-reference-note (key entry)
+      "Format a freshly created, empty reference-note buffer for citekey KEY."
+      (let ((title (or (citar-get-value "title" entry) key))
+            (author (or (citar-get-value "author" entry)
+                        (citar-get-value "editor" entry) ""))
+            (year (or (citar-get-value "year" entry)
+                      (citar-get-value "date" entry) "")))
+        (insert (format "#+title: %s (%s) %s\n" author year title))
+        ;; `org-set-tags' needs a heading; file-level tags go via the
+        ;; #+filetags keyword instead (same convention Vulpea/org-roam
+        ;; single-file notes use).
+        (insert "#+filetags: :reference:\n\n")
+        (org-id-get-create)
+        (org-set-property "CREATED" (format-time-string "[%Y-%m-%d]"))
+        (org-set-property "CITEKEY" key)
+        (org-set-property "ALIASES" "")
+        (goto-char (point-max))
+        (insert "\n* Notes\n")))
+    (setq citar-note-format-function #'my/citar-format-reference-note))
+#+end_src
+
+Because =~/org/references/= is inside =vulpea-db-sync-directories= (set to
+=("~/org/")=), every reference note is picked up by Vulpea's normal
+autosync on save -- no separate Vulpea API call is needed to "register" it;
+it behaves like any other Vulpea note from that point on.
+
+** AUCTeX (for LaTeX authoring later)
+#+begin_src emacs-lisp
+  (use-package auctex)
+#+end_src
+=citar-capf-setup= is already hooked onto =LaTeX-mode= above, so
+=citar-insert-citation= works in =.tex= buffers against the same
+=citar-bibliography=, inserting =\cite{key}= -- no separate LaTeX-specific
+bibliography config needed when that work starts.
+
+** Bibliography browser
+citar's own picker (=citar-insert-citation=, =citar-open=,
+=citar-open-notes=) is a narrow-as-you-type, pick-one-and-act tool -- good
+for "cite this" or "jump to my note on this paper," not for browsing. For a
+persistent, sortable, filterable view of the whole library, this mirrors
+the existing =*Lab Notebook*= buffer (=tabulated-list-mode=, ~s~ sorts by
+column, ~/~ substring-filters, ~RET~ opens) almost exactly.
+#+begin_src emacs-lisp
+  (defun my/bibliography--entries ()
+    ;; `citar-has-notes'/`citar-has-files' return nil outright (not a
+    ;; predicate) when *nothing* in the library has notes/files yet --
+    ;; only a non-empty library gets a callable predicate back.
+    (let ((has-notes (citar-has-notes))
+          (has-files (citar-has-files)))
+      (mapcar
+       (lambda (key)
+         (let ((entry (citar-get-entry key)))
+           (list key
+                 (vector (or (citar-get-value "year" entry)
+                             (citar-get-value "date" entry) "")
+                         (or (citar-get-value "author" entry)
+                             (citar-get-value "editor" entry) "")
+                         (or (citar-get-value "title" entry) "")
+                         (or (citar-get-value "keywords" entry) "")
+                         (if (and has-notes (funcall has-notes key)) "Y" "")
+                         (if (and has-files (funcall has-files key)) "Y" "")))))
+       (hash-table-keys (citar-get-entries)))))
+
+  (defvar-local bibliography-list--filter nil
+    "Substring filter (matched against any column), or nil for none.")
+
+  (defun my/bibliography-list--entries ()
+    (let ((filter bibliography-list--filter))
+      (if (not filter)
+          (my/bibliography--entries)
+        (seq-filter
+         (lambda (row)
+           (seq-some (lambda (col) (string-match-p (regexp-quote filter) col))
+                      (append (cadr row) nil)))
+         (my/bibliography--entries)))))
+
+  (define-derived-mode bibliography-list-mode tabulated-list-mode "Bibliography"
+    "Major mode listing all bibliography entries."
+    (setq tabulated-list-format [("Year" 6 t) ("Author" 25 t) ("Title" 0 t)
+                                  ("Tags" 20 t) ("Note" 5 t) ("PDF" 5 t)])
+    (setq tabulated-list-sort-key (cons "Year" nil))
+    (setq tabulated-list-entries #'my/bibliography-list--entries)
+    (tabulated-list-init-header))
+
+  (defun bibliography-list-visit ()
+    "Open (or create) the reference note for the entry at point."
+    (interactive)
+    (when-let ((key (tabulated-list-get-id)))
+      (citar-open-notes (list key))))
+
+  (defun bibliography-list-open-file ()
+    "Open the library PDF for the entry at point."
+    (interactive)
+    (when-let ((key (tabulated-list-get-id)))
+      (citar-open-files (list key))))
+
+  (defun bibliography-list-sort-by-column ()
+    "Prompt for a column and sort the table by it (repeat to flip direction)."
+    (interactive)
+    (let* ((names (mapcar #'car (append tabulated-list-format nil)))
+           (name (completing-read "Sort by: " names nil t))
+           (col (seq-position names name)))
+      (tabulated-list-sort col)))
+
+  (defun bibliography-list-set-filter (filter)
+    "Filter the table to entries whose columns contain FILTER."
+    (interactive
+     (list (read-string "Filter (author/title/tag substring, empty to clear): "
+                         bibliography-list--filter)))
+    (setq bibliography-list--filter (unless (string-empty-p filter) filter))
+    (tabulated-list-print t))
+
+  (defun bibliography-list-clear-filter ()
+    (interactive)
+    (setq bibliography-list--filter nil)
+    (tabulated-list-print t))
+
+  (define-key bibliography-list-mode-map (kbd "RET") #'bibliography-list-visit)
+  (define-key bibliography-list-mode-map (kbd "o") #'bibliography-list-open-file)
+  (define-key bibliography-list-mode-map (kbd "s") #'bibliography-list-sort-by-column)
+  (define-key bibliography-list-mode-map (kbd "/") #'bibliography-list-set-filter)
+  (define-key bibliography-list-mode-map (kbd "c") #'bibliography-list-clear-filter)
+
+  (defun my/bibliography-list ()
+    (interactive)
+    (let ((buf (get-buffer-create "*Bibliography*")))
+      (with-current-buffer buf
+        (bibliography-list-mode)
+        (tabulated-list-print t))
+      (switch-to-buffer buf)))
+#+end_src
+
+Keys inside =*Bibliography*=: ~RET~ opens (or creates) the paper's
+reference note, ~o~ opens its library PDF, ~s~ prompts for a column to sort
+by (press again on the same column to flip direction), ~/~ filters to
+entries whose Year/Author/Title/Tags contain a substring, and ~c~ clears
+the filter -- the same keys as =*Lab Notebook*=, deliberately.
+
+** Keybindings
+#+begin_src emacs-lisp
+  (general-define-key
+   :prefix "C-c"
+   "b" 'citar-insert-citation
+   "n" 'citar-open-notes
+   "r" 'my/bibliography-list)
+#+end_src
+=C-c n= doubles as the Lab Notebook's "next page" key, but only inside a
+buffer with a =PAGE_ID= property (see =lab-notebook-entry-mode= above,
+which shadows the global binding via =emulation-mode-map-alists=), so the
+two never actually conflict.

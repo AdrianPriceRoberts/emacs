@@ -39,9 +39,9 @@
 
 ;; Disable line numbers in some modes
 (dolist (mode '(org-mode-hook
-  	      term-mode-hook
-  	      eshell-mode-hook
-  	      shell-mode-hook))
+		term-mode-hook
+		eshell-mode-hook
+		shell-mode-hook))
 
   (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
@@ -538,7 +538,7 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
     (ivy-mode 1))
 
 
-
+  
 (use-package ivy-rich
   :init
   (ivy-rich-mode 1))
@@ -551,6 +551,16 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 	 ("C-r" . 'counsel-minibuffer-history))
   :config
   (setq ivy-initial-inputs-alist nil)) ;; Don't start searches with ^
+
+(use-package prescient
+  :config
+  (setq prescient-filter-method '(literal fuzzy))
+  (prescient-persist-mode 1))
+
+(use-package ivy-prescient
+  :after (ivy counsel)
+  :config
+  (ivy-prescient-mode 1))
 
 (use-package helpful
   :ensure t
@@ -792,3 +802,160 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 (setq image-auto-resize 'fit-window
       image-auto-resize-on-window-resize 1
       image-scaling-factor 1.0)
+
+(defvar my/biblio-dir (expand-file-name "biblio/" org-directory))
+(defvar my/reference-notes-dir (expand-file-name "references/" org-directory))
+(defvar my/biblio-file (expand-file-name "library.bib" my/biblio-dir))
+
+(dolist (d (list my/biblio-dir my/reference-notes-dir))
+  (unless (file-exists-p d) (make-directory d t)))
+
+;; Resolve the uWaterloo (work/school) OneDrive specifically --
+;; %OneDriveCommercial% names it by account type, unlike plain
+;; %OneDrive%, which just points at whichever account was set up
+;; first/primary and isn't guaranteed to be the uWaterloo one or to
+;; agree across machines. Uses powershell.exe, not cmd.exe: cmd.exe
+;; refuses a WSL UNC working directory and prints a warning onto
+;; stdout ("UNC paths are not supported...") that corrupts the
+;; captured value; powershell.exe (already used elsewhere in this
+;; file for clipboard interop) doesn't have that problem.
+(defun ap/onedrive-root ()
+  "Local WSL path to the uWaterloo OneDrive root, or nil if unresolved."
+  (let ((raw (string-trim
+              (shell-command-to-string
+               "powershell.exe -NoProfile -Command \"[Environment]::GetEnvironmentVariable('OneDriveCommercial')\""))))
+    (unless (string-empty-p raw) (ap/wslpath raw))))
+
+(use-package citar
+  :custom
+  (citar-bibliography (list my/biblio-file))
+  (org-cite-global-bibliography (list my/biblio-file))
+  (citar-library-paths (list (expand-file-name "zotero-pdfs/" (ap/onedrive-root))))
+  (citar-notes-paths (list my/reference-notes-dir))
+  (org-cite-insert-processor 'citar)
+  (org-cite-follow-processor 'citar)
+  (org-cite-activate-processor 'citar)
+  :hook
+  (LaTeX-mode . citar-capf-setup)
+  (org-mode . citar-capf-setup)
+  :config
+  ;; citar's default note-creation formatter (citar-org-format-note-default)
+  ;; only adds an org-id when it detects an org-roam buffer, which Vulpea
+  ;; never is -- so reference notes need their own formatter to get an ID,
+  ;; CREATED, and a tag, matching how every other Vulpea note is built
+  ;; (see `my/vulpea-capture-target' above).
+  (defun my/citar-format-reference-note (key entry)
+    "Format a freshly created, empty reference-note buffer for citekey KEY."
+    (let ((title (or (citar-get-value "title" entry) key))
+          (author (or (citar-get-value "author" entry)
+                      (citar-get-value "editor" entry) ""))
+          (year (or (citar-get-value "year" entry)
+                    (citar-get-value "date" entry) "")))
+      (insert (format "#+title: %s (%s) %s\n" author year title))
+      ;; `org-set-tags' needs a heading; file-level tags go via the
+      ;; #+filetags keyword instead (same convention Vulpea/org-roam
+      ;; single-file notes use).
+      (insert "#+filetags: :reference:\n\n")
+      (org-id-get-create)
+      (org-set-property "CREATED" (format-time-string "[%Y-%m-%d]"))
+      (org-set-property "CITEKEY" key)
+      (org-set-property "ALIASES" "")
+      (goto-char (point-max))
+      (insert "\n* Notes\n")))
+  (setq citar-note-format-function #'my/citar-format-reference-note))
+
+(use-package auctex)
+
+(defun my/bibliography--entries ()
+  ;; `citar-has-notes'/`citar-has-files' return nil outright (not a
+  ;; predicate) when *nothing* in the library has notes/files yet --
+  ;; only a non-empty library gets a callable predicate back.
+  (let ((has-notes (citar-has-notes))
+        (has-files (citar-has-files)))
+    (mapcar
+     (lambda (key)
+       (let ((entry (citar-get-entry key)))
+         (list key
+               (vector (or (citar-get-value "year" entry)
+                           (citar-get-value "date" entry) "")
+                       (or (citar-get-value "author" entry)
+                           (citar-get-value "editor" entry) "")
+                       (or (citar-get-value "title" entry) "")
+                       (or (citar-get-value "keywords" entry) "")
+                       (if (and has-notes (funcall has-notes key)) "Y" "")
+                       (if (and has-files (funcall has-files key)) "Y" "")))))
+     (hash-table-keys (citar-get-entries)))))
+
+(defvar-local bibliography-list--filter nil
+  "Substring filter (matched against any column), or nil for none.")
+
+(defun my/bibliography-list--entries ()
+  (let ((filter bibliography-list--filter))
+    (if (not filter)
+        (my/bibliography--entries)
+      (seq-filter
+       (lambda (row)
+         (seq-some (lambda (col) (string-match-p (regexp-quote filter) col))
+                    (append (cadr row) nil)))
+       (my/bibliography--entries)))))
+
+(define-derived-mode bibliography-list-mode tabulated-list-mode "Bibliography"
+  "Major mode listing all bibliography entries."
+  (setq tabulated-list-format [("Year" 6 t) ("Author" 25 t) ("Title" 0 t)
+                                ("Tags" 20 t) ("Note" 5 t) ("PDF" 5 t)])
+  (setq tabulated-list-sort-key (cons "Year" nil))
+  (setq tabulated-list-entries #'my/bibliography-list--entries)
+  (tabulated-list-init-header))
+
+(defun bibliography-list-visit ()
+  "Open (or create) the reference note for the entry at point."
+  (interactive)
+  (when-let ((key (tabulated-list-get-id)))
+    (citar-open-notes (list key))))
+
+(defun bibliography-list-open-file ()
+  "Open the library PDF for the entry at point."
+  (interactive)
+  (when-let ((key (tabulated-list-get-id)))
+    (citar-open-files (list key))))
+
+(defun bibliography-list-sort-by-column ()
+  "Prompt for a column and sort the table by it (repeat to flip direction)."
+  (interactive)
+  (let* ((names (mapcar #'car (append tabulated-list-format nil)))
+         (name (completing-read "Sort by: " names nil t))
+         (col (seq-position names name)))
+    (tabulated-list-sort col)))
+
+(defun bibliography-list-set-filter (filter)
+  "Filter the table to entries whose columns contain FILTER."
+  (interactive
+   (list (read-string "Filter (author/title/tag substring, empty to clear): "
+                       bibliography-list--filter)))
+  (setq bibliography-list--filter (unless (string-empty-p filter) filter))
+  (tabulated-list-print t))
+
+(defun bibliography-list-clear-filter ()
+  (interactive)
+  (setq bibliography-list--filter nil)
+  (tabulated-list-print t))
+
+(define-key bibliography-list-mode-map (kbd "RET") #'bibliography-list-visit)
+(define-key bibliography-list-mode-map (kbd "o") #'bibliography-list-open-file)
+(define-key bibliography-list-mode-map (kbd "s") #'bibliography-list-sort-by-column)
+(define-key bibliography-list-mode-map (kbd "/") #'bibliography-list-set-filter)
+(define-key bibliography-list-mode-map (kbd "c") #'bibliography-list-clear-filter)
+
+(defun my/bibliography-list ()
+  (interactive)
+  (let ((buf (get-buffer-create "*Bibliography*")))
+    (with-current-buffer buf
+      (bibliography-list-mode)
+      (tabulated-list-print t))
+    (switch-to-buffer buf)))
+
+(general-define-key
+ :prefix "C-c"
+ "b" 'citar-insert-citation
+ "n" 'citar-open-notes
+ "r" 'my/bibliography-list)
