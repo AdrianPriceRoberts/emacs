@@ -417,17 +417,26 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 ;; Tabulated overview buffer -------------------------------------------
 
 ;; Shared with the *Bibliography* browser (defined below, in the
-;; Citations section): read a filter string with LIVE feedback, the
-;; same way `citar-insert-citation'/`vulpea-find' narrow as you type,
-;; rather than read-then-refresh-once. FILTER-VAR is a buffer-local
-;; variable symbol (already `defvar-local'd) in the calling buffer.
-(defun my/tabulated-list-read-filter (filter-var prompt)
-  "Read a filter string for FILTER-VAR with PROMPT, live-updating the
- calling buffer's table after every keystroke. RET commits the final
- value (already applied); C-g restores whatever FILTER-VAR held before
- this call started."
-  (let ((buf (current-buffer))
-        (prev (symbol-value filter-var)))
+;; Citations section). FILTER-VAR (a buffer-local variable symbol,
+;; already `defvar-local'd) holds either nil (no filter) or a cons
+;; (COLUMN-INDEX-OR-NIL . TEXT), where a nil COLUMN-INDEX means "any
+;; column" -- mirrors `tabulated-list-sort''s own "pick a column"
+;; prompt (the ~s~ key), rather than defaulting to a single blind
+;; all-columns text search.
+(defun my/tabulated-list-read-filter (filter-var label)
+  "Prompt for a column (or \"All columns\"), then read a filter string
+ for it into FILTER-VAR, live-updating the calling buffer's table after
+ every keystroke -- the same way `citar-insert-citation'/`vulpea-find'
+ narrow as you type. RET commits; C-g restores whatever FILTER-VAR held
+ before this call started."
+  (let* ((buf (current-buffer))
+         (prev (symbol-value filter-var))
+         (col-names (mapcar #'car (append tabulated-list-format nil)))
+         (choice (completing-read (format "Filter %s by column: " label)
+                                   (cons "All columns" col-names)
+                                   nil t nil nil "All columns"))
+         (col-index (unless (string= choice "All columns")
+                      (seq-position col-names choice))))
     (condition-case nil
         (minibuffer-with-setup-hook
             (lambda ()
@@ -437,18 +446,51 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
                  (when (buffer-live-p buf)
                    (let ((input (minibuffer-contents-no-properties)))
                      (with-current-buffer buf
-                       (set filter-var (unless (string-empty-p input) input))
+                       (set filter-var (unless (string-empty-p input)
+                                         (cons col-index input)))
                        (tabulated-list-print t)))))
                nil t))
-          (read-string prompt prev))
+          (read-string (format "Filter [%s] %s: " choice label)
+                        (and prev (cdr prev))))
       (quit
        (with-current-buffer buf
          (set filter-var prev)
          (tabulated-list-print t))
        (signal 'quit nil)))))
 
+;; Shared with *Bibliography*: filter ROWS (each a (id . [col...]) pair,
+;; columns already themed via `propertize') to those matching FILTER --
+;; a (COLUMN-INDEX-OR-NIL . TEXT) cons, or nil for no filter -- marking
+;; the matched span with the `match' face, the same face isearch/occur/
+;; grep-mode use for "here's what you searched for," so a live-filtered
+;; table looks and behaves like the ivy pickers rather than just
+;; narrowing silently.
+(defun my/tabulated-list--filter-rows (rows filter)
+  (if (not filter)
+      rows
+    (let ((col-index (car filter))
+          (regexp (regexp-quote (cdr filter))))
+      (seq-keep
+       (lambda (row)
+         (let (hit)
+           (let ((cols (cl-loop
+                        for col in (append (cadr row) nil)
+                        for i from 0
+                        collect
+                        (if (and (or (not col-index) (= i col-index))
+                                 (string-match regexp col))
+                            (let ((s (copy-sequence col)))
+                              (setq hit t)
+                              (add-face-text-property
+                               (match-beginning 0) (match-end 0) 'match t s)
+                              s)
+                          col))))
+             (when hit
+               (list (car row) (apply #'vector cols))))))
+       rows))))
+
 (defvar-local lab-notebook-list--filter nil
-  "Substring filter (matched against any column), or nil for none.")
+  "Nil, or (COLUMN-INDEX-OR-NIL . TEXT); nil index means any column.")
 
 ;; Cached so live-filter keystrokes just re-filter an in-memory list
 ;; instead of re-querying Vulpea's DB on every character typed. `g'
@@ -470,15 +512,7 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
              (my/lab-notebook--notes)))))
 
 (defun my/lab-notebook-list--entries ()
-  (let ((filter lab-notebook-list--filter)
-        (rows (my/lab-notebook--all-rows)))
-    (if (not filter)
-        rows
-      (seq-filter
-       (lambda (row)
-         (seq-some (lambda (col) (string-match-p (regexp-quote filter) col))
-                    (append (cadr row) nil)))
-       rows))))
+  (my/tabulated-list--filter-rows (my/lab-notebook--all-rows) lab-notebook-list--filter))
 
 (define-derived-mode lab-notebook-list-mode tabulated-list-mode "Lab-Notebook"
   "Major mode listing all lab notebook entries."
@@ -486,10 +520,13 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   (setq tabulated-list-sort-key (cons "Date" t)) ; most recent first
   (setq tabulated-list-entries #'my/lab-notebook-list--entries)
   (tabulated-list-init-header)
-  (setq mode-line-format
-        (append mode-line-format
-                (list (propertize "  [s]ort [/]filter [c]lear [g]refresh [RET]open"
-                                   'face 'font-lock-comment-face)))))
+  ;; doom-modeline manages `mode-line-format' dynamically and overwrites
+  ;; anything appended there; the header line is untouched by it, so the
+  ;; hint goes there instead, after the column titles.
+  (setq header-line-format
+        (append header-line-format
+                (list "  " (propertize "[s]ort [/]filter [c]lear [g]refresh [RET]open"
+                                        'face 'font-lock-comment-face)))))
 
 (defun lab-notebook-list-visit ()
   (interactive)
@@ -511,11 +548,9 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
     (tabulated-list-sort col)))
 
 (defun lab-notebook-list-set-filter ()
-  "Filter the table live as you type (any column); RET commits, C-g cancels."
+  "Pick a column (or all), then filter live as you type; RET commits, C-g cancels."
   (interactive)
-  (my/tabulated-list-read-filter
-   'lab-notebook-list--filter
-   "Filter (Page ID/Date/Title substring, empty to clear): "))
+  (my/tabulated-list-read-filter 'lab-notebook-list--filter "text"))
 
 (defun lab-notebook-list-clear-filter ()
   (interactive)
@@ -966,18 +1001,10 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
                (hash-table-keys (citar-get-entries)))))))
 
 (defvar-local bibliography-list--filter nil
-  "Substring filter (matched against any column), or nil for none.")
+  "Nil, or (COLUMN-INDEX-OR-NIL . TEXT); nil index means any column.")
 
 (defun my/bibliography-list--entries ()
-  (let ((filter bibliography-list--filter)
-        (rows (my/bibliography--all-rows)))
-    (if (not filter)
-        rows
-      (seq-filter
-       (lambda (row)
-         (seq-some (lambda (col) (string-match-p (regexp-quote filter) col))
-                    (append (cadr row) nil)))
-       rows))))
+  (my/tabulated-list--filter-rows (my/bibliography--all-rows) bibliography-list--filter))
 
 (define-derived-mode bibliography-list-mode tabulated-list-mode "Bibliography"
   "Major mode listing all bibliography entries."
@@ -986,10 +1013,12 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   (setq tabulated-list-sort-key (cons "Year" t)) ; most recent first
   (setq tabulated-list-entries #'my/bibliography-list--entries)
   (tabulated-list-init-header)
-  (setq mode-line-format
-        (append mode-line-format
-                (list (propertize "  [s]ort [/]filter [c]lear [g]refresh [RET]note [o]pdf"
-                                   'face 'font-lock-comment-face)))))
+  ;; See the matching comment in `lab-notebook-list-mode': doom-modeline
+  ;; overwrites mode-line-format, so the hint goes in the header line.
+  (setq header-line-format
+        (append header-line-format
+                (list "  " (propertize "[s]ort [/]filter [c]lear [g]refresh [RET]note [o]pdf"
+                                        'face 'font-lock-comment-face)))))
 
 (defun bibliography-list-visit ()
   "Open (or create) the reference note for the entry at point."
@@ -1018,11 +1047,9 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
     (tabulated-list-sort col)))
 
 (defun bibliography-list-set-filter ()
-  "Filter the table live as you type (any column); RET commits, C-g cancels."
+  "Pick a column (or all), then filter live as you type; RET commits, C-g cancels."
   (interactive)
-  (my/tabulated-list-read-filter
-   'bibliography-list--filter
-   "Filter (author/title/tag substring, empty to clear): "))
+  (my/tabulated-list-read-filter 'bibliography-list--filter "text"))
 
 (defun bibliography-list-clear-filter ()
   (interactive)
