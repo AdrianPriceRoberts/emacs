@@ -530,36 +530,91 @@
 
   ;; Tabulated overview buffer -------------------------------------------
 
+  ;; Shared with the *Bibliography* browser (defined below, in the
+  ;; Citations section): read a filter string with LIVE feedback, the
+  ;; same way `citar-insert-citation'/`vulpea-find' narrow as you type,
+  ;; rather than read-then-refresh-once. FILTER-VAR is a buffer-local
+  ;; variable symbol (already `defvar-local'd) in the calling buffer.
+  (defun my/tabulated-list-read-filter (filter-var prompt)
+    "Read a filter string for FILTER-VAR with PROMPT, live-updating the
+   calling buffer's table after every keystroke. RET commits the final
+   value (already applied); C-g restores whatever FILTER-VAR held before
+   this call started."
+    (let ((buf (current-buffer))
+          (prev (symbol-value filter-var)))
+      (condition-case nil
+          (minibuffer-with-setup-hook
+              (lambda ()
+                (add-hook
+                 'post-command-hook
+                 (lambda ()
+                   (when (buffer-live-p buf)
+                     (let ((input (minibuffer-contents-no-properties)))
+                       (with-current-buffer buf
+                         (set filter-var (unless (string-empty-p input) input))
+                         (tabulated-list-print t)))))
+                 nil t))
+            (read-string prompt prev))
+        (quit
+         (with-current-buffer buf
+           (set filter-var prev)
+           (tabulated-list-print t))
+         (signal 'quit nil)))))
+
   (defvar-local lab-notebook-list--filter nil
-    "Substring filter (matched against Page ID or Title), or nil for none.")
+    "Substring filter (matched against any column), or nil for none.")
+
+  ;; Cached so live-filter keystrokes just re-filter an in-memory list
+  ;; instead of re-querying Vulpea's DB on every character typed. `g'
+  ;; clears the cache to pick up new/changed notes.
+  (defvar-local my/lab-notebook--row-cache nil)
+
+  (defun my/lab-notebook--all-rows ()
+    (or my/lab-notebook--row-cache
+        (setq my/lab-notebook--row-cache
+              (seq-keep
+               (lambda (note)
+                 (let* ((page-id (or (my/lab-notebook--page-id note) ""))
+                        (created (or (alist-get "CREATED" (vulpea-note-properties note) nil nil #'string=) ""))
+                        (title (or (vulpea-note-title note) "")))
+                   (list (vulpea-note-path note)
+                         (vector (propertize page-id 'face 'font-lock-keyword-face)
+                                 (propertize created 'face 'font-lock-comment-face)
+                                 title))))
+               (my/lab-notebook--notes)))))
 
   (defun my/lab-notebook-list--entries ()
-    (let ((filter lab-notebook-list--filter))
-      (seq-keep
-       (lambda (note)
-         (let* ((page-id (or (my/lab-notebook--page-id note) ""))
-                (created (or (alist-get "CREATED" (vulpea-note-properties note) nil nil #'string=) ""))
-                (title (or (vulpea-note-title note) "")))
-           (when (or (not filter)
-                     (string-match-p (regexp-quote filter) page-id)
-                     (string-match-p (regexp-quote filter) title))
-             (list (vulpea-note-path note)
-                   (vector (propertize page-id 'face 'font-lock-keyword-face)
-                           (propertize created 'face 'font-lock-comment-face)
-                           title)))))
-       (my/lab-notebook--notes))))
+    (let ((filter lab-notebook-list--filter)
+          (rows (my/lab-notebook--all-rows)))
+      (if (not filter)
+          rows
+        (seq-filter
+         (lambda (row)
+           (seq-some (lambda (col) (string-match-p (regexp-quote filter) col))
+                      (append (cadr row) nil)))
+         rows))))
 
   (define-derived-mode lab-notebook-list-mode tabulated-list-mode "Lab-Notebook"
     "Major mode listing all lab notebook entries."
     (setq tabulated-list-format [("Page ID" 12 t) ("Date" 12 t) ("Title" 0 t)])
     (setq tabulated-list-sort-key (cons "Date" t)) ; most recent first
     (setq tabulated-list-entries #'my/lab-notebook-list--entries)
-    (tabulated-list-init-header))
+    (tabulated-list-init-header)
+    (setq mode-line-format
+          (append mode-line-format
+                  (list (propertize "  [s]ort [/]filter [c]lear [g]refresh [RET]open"
+                                     'face 'font-lock-comment-face)))))
 
   (defun lab-notebook-list-visit ()
     (interactive)
     (let ((path (tabulated-list-get-id)))
       (when path (find-file path))))
+
+  (defun lab-notebook-list-refresh ()
+    "Forget the cached rows and re-scan Vulpea for new/changed notes."
+    (interactive)
+    (setq my/lab-notebook--row-cache nil)
+    (tabulated-list-print t))
 
   (defun lab-notebook-list-sort-by-column ()
     "Prompt for a column and sort the table by it (repeat to flip direction)."
@@ -569,13 +624,12 @@
            (col (seq-position names name)))
       (tabulated-list-sort col)))
 
-  (defun lab-notebook-list-set-filter (filter)
-    "Filter the table to entries whose Page ID or Title contains FILTER."
-    (interactive
-     (list (read-string "Filter (Page ID/Title substring, empty to clear): "
-                         lab-notebook-list--filter)))
-    (setq lab-notebook-list--filter (unless (string-empty-p filter) filter))
-    (tabulated-list-print t))
+  (defun lab-notebook-list-set-filter ()
+    "Filter the table live as you type (any column); RET commits, C-g cancels."
+    (interactive)
+    (my/tabulated-list-read-filter
+     'lab-notebook-list--filter
+     "Filter (Page ID/Date/Title substring, empty to clear): "))
 
   (defun lab-notebook-list-clear-filter ()
     (interactive)
@@ -586,6 +640,7 @@
   (define-key lab-notebook-list-mode-map (kbd "s") #'lab-notebook-list-sort-by-column)
   (define-key lab-notebook-list-mode-map (kbd "/") #'lab-notebook-list-set-filter)
   (define-key lab-notebook-list-mode-map (kbd "c") #'lab-notebook-list-clear-filter)
+  (define-key lab-notebook-list-mode-map (kbd "g") #'lab-notebook-list-refresh)
 
   (defun my/lab-notebook-list ()
     (interactive)
@@ -597,12 +652,16 @@
 
 #+end_src
 
-Keys inside =*Lab Notebook*=: ~n~/~p~ move the selection (built into
-=tabulated-list-mode=, same as Dired), ~RET~ opens the entry, ~s~ prompts for a
-column to sort by (press again on the same column to flip direction; clicking
-a column header does the same), ~/~ filters to entries whose Page ID or Title
-contains a substring (e.g. =APR= to show just that notebook), and ~c~ clears
-the filter.
+Keys inside =*Lab Notebook*= (also shown in the mode line): ~n~/~p~ move the
+selection (built into =tabulated-list-mode=, same as Dired), ~RET~ opens the
+entry, ~s~ prompts for a column to sort by (press again on the same column
+to flip direction; clicking a column header does the same), ~/~ filters
+*live* -- the table updates after every keystroke, the same way
+=vulpea-find= narrows as you type -- to entries whose Page ID/Date/Title
+contain a substring (e.g. =APR= to show just that notebook; =C-g= cancels
+and restores the previous filter), ~c~ clears the filter, and ~g~ forgets
+the cached row list and re-scans Vulpea (only needed after adding/editing
+notes without leaving this buffer -- opening it fresh always re-scans).
 
 Inside any lab notebook entry (any org buffer with a ~PAGE_ID~ property),
 ~C-c n~ / ~C-c p~ jump to the next/previous existing page in that notebook.
@@ -725,23 +784,44 @@ that has unsaved edits.
 
 #+end_src
 * Ivy Prescient
-Out-of-order character-fuzzy matching (e.g. "smh" matches "Smith") for every
-Ivy/Counsel-backed command: =M-x=, find-file, =counsel-ibuffer=, swiper,
-=vulpea-find=, =vulpea-insert=, and citar's pickers.
+For =M-x=, buffer-switching, and similar "pick from my usual suspects"
+commands, prescient's frecency-based ranking (recently/frequently *picked*
+candidates sort first) is exactly right, and its fuzzy filtering (e.g.
+"smh" matches "Smith") is a nice bonus. For "find this specific note/paper
+by typing part of its name" commands -- =vulpea-find=, =vulpea-insert=,
+citar's pickers -- both parts actively hurt:
 
-Prescient's *ranking*, though, is frecency-based (recently/frequently
-*picked* candidates sort first) with no concept of match quality -- ties
-(which is everything, the first time you search for something) fall back to
-shortest-candidate-first. That's actively wrong for a "find this specific
-note/paper by typing part of its name" command: a long, exact-prefix match
-loses to a short, barely-related one on pure length, burying the note you
-actually want. It's the right behavior for something like =M-x= or
-=ivy-switch-buffer=, where "the thing I pick most often" genuinely is what
-you want back first -- which is why prescient's own author already excludes
-=swiper= from frecency-sorting by default. The fix here is to extend that
-same exclusion to every "search by content" command in this config, so they
-still get prescient's better *filtering* but fall back to Ivy's own
-(unsorted, filter-order) ranking instead of frecency:
+- *Ranking*: frecency has no concept of match quality. The first time you
+  search for something, every candidate ties on history, and the tiebreak
+  falls back to shortest-candidate-first -- so a long, exact-prefix match
+  (a title with extra trailing text) loses to a short, barely-related one
+  purely on length, burying the note you actually want.
+- *Filtering*: prescient's fuzzy method builds a loose "these characters
+  appear somewhere, in order, with any gap" regexp, which over hundreds of
+  candidates can surface distant, coincidental matches that don't belong
+  in the results at all -- more noise for a ranking step that already
+  can't sort it out.
+
+Two things fix this, both scoped to just the "search by content" commands
+(everything else keeps prescient's fuzzy filtering + frecency ranking):
+
+1. An explicit *nil* entry in =ivy-sort-functions-alist= for each of these
+   commands. This is different from (and actually works, unlike) just
+   excluding them from =ivy-prescient-sort-commands=: that variable only
+   controls whether =:sort t= gets *added* to a command's =ivy-read= call
+   when it's missing -- it does nothing when the command already passes
+   =:sort t= itself, which is exactly what buries the exact match here.
+   Setting the caller's own alist entry to =nil= is checked *before* the
+   catch-all default and wins outright, regardless of what =:sort= value
+   the command passes.
+2. An =ivy--regex-plus= override in =ivy-re-builders-alist= for the same
+   commands -- Ivy's own plain literal-substring builder instead of
+   prescient's fuzzy one, eliminating the noisy distant matches. Trade-off
+   worth knowing: =ivy--regex-plus= requires multi-word queries in the
+   *same order* as they appear in the candidate (e.g. "2020 smith" won't
+   match "... by Smith (2020)") -- less flexible than fuzzy, but precise,
+   which is what actually fixes "exact match doesn't show up on top."
+
 #+begin_src emacs-lisp
   (use-package prescient
     :config
@@ -750,17 +830,13 @@ still get prescient's better *filtering* but fall back to Ivy's own
 
   (use-package ivy-prescient
     :after (ivy counsel)
-    :custom
-    ;; Frecency-sort everything EXCEPT commands where you're searching by
-    ;; content for one specific thing (a note, a citation) rather than
-    ;; picking from a short list of usual suspects.
-    (ivy-prescient-sort-commands
-     '(:not swiper swiper-isearch ivy-switch-buffer
-       vulpea-find vulpea-insert
-       citar-insert-citation citar-open citar-open-notes
-       citar-open-files citar-dwim))
     :config
-    (ivy-prescient-mode 1))
+    (ivy-prescient-mode 1)
+    (dolist (caller '(vulpea-find vulpea-insert
+                       citar-insert-citation citar-open citar-open-notes
+                       citar-open-files citar-dwim))
+      (setf (alist-get caller ivy-sort-functions-alist) nil)
+      (setf (alist-get caller ivy-re-builders-alist) #'ivy--regex-plus)))
 #+end_src
 * Helpful
 #+begin_src emacs-lisp
@@ -1159,48 +1235,58 @@ persistent, sortable, filterable view of the whole library, this mirrors
 the existing =*Lab Notebook*= buffer (=tabulated-list-mode=, ~s~ sorts by
 column, ~/~ substring-filters, ~RET~ opens) almost exactly.
 #+begin_src emacs-lisp
-  (defun my/bibliography--entries ()
-    ;; `citar-has-notes'/`citar-has-files' return nil outright (not a
-    ;; predicate) when *nothing* in the library has notes/files yet --
-    ;; only a non-empty library gets a callable predicate back.
-    ;; Faces mirror `my/lab-notebook-list--entries': the "date-like"
-    ;; column gets `font-lock-comment-face', the "identifier-like" column
-    ;; gets `font-lock-keyword-face' -- both theme-aware, not hardcoded
-    ;; colors, so they follow whatever theme is active.
-    (let ((has-notes (citar-has-notes))
-          (has-files (citar-has-files)))
-      (mapcar
-       (lambda (key)
-         (let* ((entry (citar-get-entry key))
-                (year (or (citar-get-value "year" entry)
-                          (citar-get-value "date" entry) ""))
-                (author (or (citar-get-value "author" entry)
-                            (citar-get-value "editor" entry) ""))
-                (title (or (citar-get-value "title" entry) ""))
-                (tags (or (citar-get-value "keywords" entry) ""))
-                (has-note (and has-notes (funcall has-notes key)))
-                (has-file (and has-files (funcall has-files key))))
-           (list key
-                 (vector (propertize year 'face 'font-lock-comment-face)
-                         (propertize author 'face 'font-lock-keyword-face)
-                         title
-                         (propertize tags 'face 'font-lock-string-face)
-                         (if has-note (propertize "Y" 'face 'success) "")
-                         (if has-file (propertize "Y" 'face 'success) "")))))
-       (hash-table-keys (citar-get-entries)))))
+  ;; Cached per buffer-session for the same reason as the Lab Notebook
+  ;; row cache: live-filter keystrokes should just re-filter an in-memory
+  ;; list, not re-walk citar's whole library on every character typed.
+  (defvar-local my/bibliography--row-cache nil)
+
+  (defun my/bibliography--all-rows ()
+    (or my/bibliography--row-cache
+        (setq my/bibliography--row-cache
+              ;; `citar-has-notes'/`citar-has-files' return nil outright
+              ;; (not a predicate) when *nothing* in the library has
+              ;; notes/files yet -- only a non-empty library gets a
+              ;; callable predicate back.
+              ;; Faces mirror `my/lab-notebook-list--entries': the
+              ;; "date-like" column gets `font-lock-comment-face', the
+              ;; "identifier-like" column gets `font-lock-keyword-face'
+              ;; -- both theme-aware, not hardcoded colors, so they
+              ;; follow whatever theme is active.
+              (let ((has-notes (citar-has-notes))
+                    (has-files (citar-has-files)))
+                (mapcar
+                 (lambda (key)
+                   (let* ((entry (citar-get-entry key))
+                          (year (or (citar-get-value "year" entry)
+                                    (citar-get-value "date" entry) ""))
+                          (author (or (citar-get-value "author" entry)
+                                      (citar-get-value "editor" entry) ""))
+                          (title (or (citar-get-value "title" entry) ""))
+                          (tags (or (citar-get-value "keywords" entry) ""))
+                          (has-note (and has-notes (funcall has-notes key)))
+                          (has-file (and has-files (funcall has-files key))))
+                     (list key
+                           (vector (propertize year 'face 'font-lock-comment-face)
+                                   (propertize author 'face 'font-lock-keyword-face)
+                                   title
+                                   (propertize tags 'face 'font-lock-string-face)
+                                   (if has-note (propertize "Y" 'face 'success) "")
+                                   (if has-file (propertize "Y" 'face 'success) "")))))
+                 (hash-table-keys (citar-get-entries)))))))
 
   (defvar-local bibliography-list--filter nil
     "Substring filter (matched against any column), or nil for none.")
 
   (defun my/bibliography-list--entries ()
-    (let ((filter bibliography-list--filter))
+    (let ((filter bibliography-list--filter)
+          (rows (my/bibliography--all-rows)))
       (if (not filter)
-          (my/bibliography--entries)
+          rows
         (seq-filter
          (lambda (row)
            (seq-some (lambda (col) (string-match-p (regexp-quote filter) col))
                       (append (cadr row) nil)))
-         (my/bibliography--entries)))))
+         rows))))
 
   (define-derived-mode bibliography-list-mode tabulated-list-mode "Bibliography"
     "Major mode listing all bibliography entries."
@@ -1208,7 +1294,11 @@ column, ~/~ substring-filters, ~RET~ opens) almost exactly.
                                   ("Tags" 20 t) ("Note" 5 t) ("PDF" 5 t)])
     (setq tabulated-list-sort-key (cons "Year" t)) ; most recent first
     (setq tabulated-list-entries #'my/bibliography-list--entries)
-    (tabulated-list-init-header))
+    (tabulated-list-init-header)
+    (setq mode-line-format
+          (append mode-line-format
+                  (list (propertize "  [s]ort [/]filter [c]lear [g]refresh [RET]note [o]pdf"
+                                     'face 'font-lock-comment-face)))))
 
   (defun bibliography-list-visit ()
     "Open (or create) the reference note for the entry at point."
@@ -1222,6 +1312,12 @@ column, ~/~ substring-filters, ~RET~ opens) almost exactly.
     (when-let ((key (tabulated-list-get-id)))
       (citar-open-files (list key))))
 
+  (defun bibliography-list-refresh ()
+    "Forget the cached rows and re-scan citar's library for changes."
+    (interactive)
+    (setq my/bibliography--row-cache nil)
+    (tabulated-list-print t))
+
   (defun bibliography-list-sort-by-column ()
     "Prompt for a column and sort the table by it (repeat to flip direction)."
     (interactive)
@@ -1230,13 +1326,12 @@ column, ~/~ substring-filters, ~RET~ opens) almost exactly.
            (col (seq-position names name)))
       (tabulated-list-sort col)))
 
-  (defun bibliography-list-set-filter (filter)
-    "Filter the table to entries whose columns contain FILTER."
-    (interactive
-     (list (read-string "Filter (author/title/tag substring, empty to clear): "
-                         bibliography-list--filter)))
-    (setq bibliography-list--filter (unless (string-empty-p filter) filter))
-    (tabulated-list-print t))
+  (defun bibliography-list-set-filter ()
+    "Filter the table live as you type (any column); RET commits, C-g cancels."
+    (interactive)
+    (my/tabulated-list-read-filter
+     'bibliography-list--filter
+     "Filter (author/title/tag substring, empty to clear): "))
 
   (defun bibliography-list-clear-filter ()
     (interactive)
@@ -1248,6 +1343,7 @@ column, ~/~ substring-filters, ~RET~ opens) almost exactly.
   (define-key bibliography-list-mode-map (kbd "s") #'bibliography-list-sort-by-column)
   (define-key bibliography-list-mode-map (kbd "/") #'bibliography-list-set-filter)
   (define-key bibliography-list-mode-map (kbd "c") #'bibliography-list-clear-filter)
+  (define-key bibliography-list-mode-map (kbd "g") #'bibliography-list-refresh)
 
   (defun my/bibliography-list ()
     (interactive)
@@ -1258,11 +1354,15 @@ column, ~/~ substring-filters, ~RET~ opens) almost exactly.
       (switch-to-buffer buf)))
 #+end_src
 
-Keys inside =*Bibliography*=: ~RET~ opens (or creates) the paper's
-reference note, ~o~ opens its library PDF, ~s~ prompts for a column to sort
-by (press again on the same column to flip direction), ~/~ filters to
-entries whose Year/Author/Title/Tags contain a substring, and ~c~ clears
-the filter -- the same keys as =*Lab Notebook*=, deliberately.
+Keys inside =*Bibliography*= (also shown in the mode line): ~RET~ opens (or
+creates) the paper's reference note, ~o~ opens its library PDF, ~s~ prompts
+for a column to sort by (press again on the same column to flip direction),
+~/~ filters *live* -- updating after every keystroke, the same way
+=citar-insert-citation= narrows as you type -- to entries whose
+Year/Author/Title/Tags contain a substring (=C-g= cancels and restores the
+previous filter), ~c~ clears the filter, and ~g~ re-scans citar's library
+(only needed after the =.bib= changes without leaving this buffer) -- the
+same keys as =*Lab Notebook*=, deliberately.
 
 ** Keybindings
 #+begin_src emacs-lisp

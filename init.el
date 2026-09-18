@@ -416,36 +416,91 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 
 ;; Tabulated overview buffer -------------------------------------------
 
+;; Shared with the *Bibliography* browser (defined below, in the
+;; Citations section): read a filter string with LIVE feedback, the
+;; same way `citar-insert-citation'/`vulpea-find' narrow as you type,
+;; rather than read-then-refresh-once. FILTER-VAR is a buffer-local
+;; variable symbol (already `defvar-local'd) in the calling buffer.
+(defun my/tabulated-list-read-filter (filter-var prompt)
+  "Read a filter string for FILTER-VAR with PROMPT, live-updating the
+ calling buffer's table after every keystroke. RET commits the final
+ value (already applied); C-g restores whatever FILTER-VAR held before
+ this call started."
+  (let ((buf (current-buffer))
+        (prev (symbol-value filter-var)))
+    (condition-case nil
+        (minibuffer-with-setup-hook
+            (lambda ()
+              (add-hook
+               'post-command-hook
+               (lambda ()
+                 (when (buffer-live-p buf)
+                   (let ((input (minibuffer-contents-no-properties)))
+                     (with-current-buffer buf
+                       (set filter-var (unless (string-empty-p input) input))
+                       (tabulated-list-print t)))))
+               nil t))
+          (read-string prompt prev))
+      (quit
+       (with-current-buffer buf
+         (set filter-var prev)
+         (tabulated-list-print t))
+       (signal 'quit nil)))))
+
 (defvar-local lab-notebook-list--filter nil
-  "Substring filter (matched against Page ID or Title), or nil for none.")
+  "Substring filter (matched against any column), or nil for none.")
+
+;; Cached so live-filter keystrokes just re-filter an in-memory list
+;; instead of re-querying Vulpea's DB on every character typed. `g'
+;; clears the cache to pick up new/changed notes.
+(defvar-local my/lab-notebook--row-cache nil)
+
+(defun my/lab-notebook--all-rows ()
+  (or my/lab-notebook--row-cache
+      (setq my/lab-notebook--row-cache
+            (seq-keep
+             (lambda (note)
+               (let* ((page-id (or (my/lab-notebook--page-id note) ""))
+                      (created (or (alist-get "CREATED" (vulpea-note-properties note) nil nil #'string=) ""))
+                      (title (or (vulpea-note-title note) "")))
+                 (list (vulpea-note-path note)
+                       (vector (propertize page-id 'face 'font-lock-keyword-face)
+                               (propertize created 'face 'font-lock-comment-face)
+                               title))))
+             (my/lab-notebook--notes)))))
 
 (defun my/lab-notebook-list--entries ()
-  (let ((filter lab-notebook-list--filter))
-    (seq-keep
-     (lambda (note)
-       (let* ((page-id (or (my/lab-notebook--page-id note) ""))
-              (created (or (alist-get "CREATED" (vulpea-note-properties note) nil nil #'string=) ""))
-              (title (or (vulpea-note-title note) "")))
-         (when (or (not filter)
-                   (string-match-p (regexp-quote filter) page-id)
-                   (string-match-p (regexp-quote filter) title))
-           (list (vulpea-note-path note)
-                 (vector (propertize page-id 'face 'font-lock-keyword-face)
-                         (propertize created 'face 'font-lock-comment-face)
-                         title)))))
-     (my/lab-notebook--notes))))
+  (let ((filter lab-notebook-list--filter)
+        (rows (my/lab-notebook--all-rows)))
+    (if (not filter)
+        rows
+      (seq-filter
+       (lambda (row)
+         (seq-some (lambda (col) (string-match-p (regexp-quote filter) col))
+                    (append (cadr row) nil)))
+       rows))))
 
 (define-derived-mode lab-notebook-list-mode tabulated-list-mode "Lab-Notebook"
   "Major mode listing all lab notebook entries."
   (setq tabulated-list-format [("Page ID" 12 t) ("Date" 12 t) ("Title" 0 t)])
   (setq tabulated-list-sort-key (cons "Date" t)) ; most recent first
   (setq tabulated-list-entries #'my/lab-notebook-list--entries)
-  (tabulated-list-init-header))
+  (tabulated-list-init-header)
+  (setq mode-line-format
+        (append mode-line-format
+                (list (propertize "  [s]ort [/]filter [c]lear [g]refresh [RET]open"
+                                   'face 'font-lock-comment-face)))))
 
 (defun lab-notebook-list-visit ()
   (interactive)
   (let ((path (tabulated-list-get-id)))
     (when path (find-file path))))
+
+(defun lab-notebook-list-refresh ()
+  "Forget the cached rows and re-scan Vulpea for new/changed notes."
+  (interactive)
+  (setq my/lab-notebook--row-cache nil)
+  (tabulated-list-print t))
 
 (defun lab-notebook-list-sort-by-column ()
   "Prompt for a column and sort the table by it (repeat to flip direction)."
@@ -455,13 +510,12 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
          (col (seq-position names name)))
     (tabulated-list-sort col)))
 
-(defun lab-notebook-list-set-filter (filter)
-  "Filter the table to entries whose Page ID or Title contains FILTER."
-  (interactive
-   (list (read-string "Filter (Page ID/Title substring, empty to clear): "
-                       lab-notebook-list--filter)))
-  (setq lab-notebook-list--filter (unless (string-empty-p filter) filter))
-  (tabulated-list-print t))
+(defun lab-notebook-list-set-filter ()
+  "Filter the table live as you type (any column); RET commits, C-g cancels."
+  (interactive)
+  (my/tabulated-list-read-filter
+   'lab-notebook-list--filter
+   "Filter (Page ID/Date/Title substring, empty to clear): "))
 
 (defun lab-notebook-list-clear-filter ()
   (interactive)
@@ -472,6 +526,7 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 (define-key lab-notebook-list-mode-map (kbd "s") #'lab-notebook-list-sort-by-column)
 (define-key lab-notebook-list-mode-map (kbd "/") #'lab-notebook-list-set-filter)
 (define-key lab-notebook-list-mode-map (kbd "c") #'lab-notebook-list-clear-filter)
+(define-key lab-notebook-list-mode-map (kbd "g") #'lab-notebook-list-refresh)
 
 (defun my/lab-notebook-list ()
   (interactive)
@@ -559,17 +614,13 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 
 (use-package ivy-prescient
   :after (ivy counsel)
-  :custom
-  ;; Frecency-sort everything EXCEPT commands where you're searching by
-  ;; content for one specific thing (a note, a citation) rather than
-  ;; picking from a short list of usual suspects.
-  (ivy-prescient-sort-commands
-   '(:not swiper swiper-isearch ivy-switch-buffer
-     vulpea-find vulpea-insert
-     citar-insert-citation citar-open citar-open-notes
-     citar-open-files citar-dwim))
   :config
-  (ivy-prescient-mode 1))
+  (ivy-prescient-mode 1)
+  (dolist (caller '(vulpea-find vulpea-insert
+                     citar-insert-citation citar-open citar-open-notes
+                     citar-open-files citar-dwim))
+    (setf (alist-get caller ivy-sort-functions-alist) nil)
+    (setf (alist-get caller ivy-re-builders-alist) #'ivy--regex-plus)))
 
 (use-package helpful
   :ensure t
@@ -875,48 +926,58 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 
 (use-package auctex)
 
-(defun my/bibliography--entries ()
-  ;; `citar-has-notes'/`citar-has-files' return nil outright (not a
-  ;; predicate) when *nothing* in the library has notes/files yet --
-  ;; only a non-empty library gets a callable predicate back.
-  ;; Faces mirror `my/lab-notebook-list--entries': the "date-like"
-  ;; column gets `font-lock-comment-face', the "identifier-like" column
-  ;; gets `font-lock-keyword-face' -- both theme-aware, not hardcoded
-  ;; colors, so they follow whatever theme is active.
-  (let ((has-notes (citar-has-notes))
-        (has-files (citar-has-files)))
-    (mapcar
-     (lambda (key)
-       (let* ((entry (citar-get-entry key))
-              (year (or (citar-get-value "year" entry)
-                        (citar-get-value "date" entry) ""))
-              (author (or (citar-get-value "author" entry)
-                          (citar-get-value "editor" entry) ""))
-              (title (or (citar-get-value "title" entry) ""))
-              (tags (or (citar-get-value "keywords" entry) ""))
-              (has-note (and has-notes (funcall has-notes key)))
-              (has-file (and has-files (funcall has-files key))))
-         (list key
-               (vector (propertize year 'face 'font-lock-comment-face)
-                       (propertize author 'face 'font-lock-keyword-face)
-                       title
-                       (propertize tags 'face 'font-lock-string-face)
-                       (if has-note (propertize "Y" 'face 'success) "")
-                       (if has-file (propertize "Y" 'face 'success) "")))))
-     (hash-table-keys (citar-get-entries)))))
+;; Cached per buffer-session for the same reason as the Lab Notebook
+;; row cache: live-filter keystrokes should just re-filter an in-memory
+;; list, not re-walk citar's whole library on every character typed.
+(defvar-local my/bibliography--row-cache nil)
+
+(defun my/bibliography--all-rows ()
+  (or my/bibliography--row-cache
+      (setq my/bibliography--row-cache
+            ;; `citar-has-notes'/`citar-has-files' return nil outright
+            ;; (not a predicate) when *nothing* in the library has
+            ;; notes/files yet -- only a non-empty library gets a
+            ;; callable predicate back.
+            ;; Faces mirror `my/lab-notebook-list--entries': the
+            ;; "date-like" column gets `font-lock-comment-face', the
+            ;; "identifier-like" column gets `font-lock-keyword-face'
+            ;; -- both theme-aware, not hardcoded colors, so they
+            ;; follow whatever theme is active.
+            (let ((has-notes (citar-has-notes))
+                  (has-files (citar-has-files)))
+              (mapcar
+               (lambda (key)
+                 (let* ((entry (citar-get-entry key))
+                        (year (or (citar-get-value "year" entry)
+                                  (citar-get-value "date" entry) ""))
+                        (author (or (citar-get-value "author" entry)
+                                    (citar-get-value "editor" entry) ""))
+                        (title (or (citar-get-value "title" entry) ""))
+                        (tags (or (citar-get-value "keywords" entry) ""))
+                        (has-note (and has-notes (funcall has-notes key)))
+                        (has-file (and has-files (funcall has-files key))))
+                   (list key
+                         (vector (propertize year 'face 'font-lock-comment-face)
+                                 (propertize author 'face 'font-lock-keyword-face)
+                                 title
+                                 (propertize tags 'face 'font-lock-string-face)
+                                 (if has-note (propertize "Y" 'face 'success) "")
+                                 (if has-file (propertize "Y" 'face 'success) "")))))
+               (hash-table-keys (citar-get-entries)))))))
 
 (defvar-local bibliography-list--filter nil
   "Substring filter (matched against any column), or nil for none.")
 
 (defun my/bibliography-list--entries ()
-  (let ((filter bibliography-list--filter))
+  (let ((filter bibliography-list--filter)
+        (rows (my/bibliography--all-rows)))
     (if (not filter)
-        (my/bibliography--entries)
+        rows
       (seq-filter
        (lambda (row)
          (seq-some (lambda (col) (string-match-p (regexp-quote filter) col))
                     (append (cadr row) nil)))
-       (my/bibliography--entries)))))
+       rows))))
 
 (define-derived-mode bibliography-list-mode tabulated-list-mode "Bibliography"
   "Major mode listing all bibliography entries."
@@ -924,7 +985,11 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
                                 ("Tags" 20 t) ("Note" 5 t) ("PDF" 5 t)])
   (setq tabulated-list-sort-key (cons "Year" t)) ; most recent first
   (setq tabulated-list-entries #'my/bibliography-list--entries)
-  (tabulated-list-init-header))
+  (tabulated-list-init-header)
+  (setq mode-line-format
+        (append mode-line-format
+                (list (propertize "  [s]ort [/]filter [c]lear [g]refresh [RET]note [o]pdf"
+                                   'face 'font-lock-comment-face)))))
 
 (defun bibliography-list-visit ()
   "Open (or create) the reference note for the entry at point."
@@ -938,6 +1003,12 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   (when-let ((key (tabulated-list-get-id)))
     (citar-open-files (list key))))
 
+(defun bibliography-list-refresh ()
+  "Forget the cached rows and re-scan citar's library for changes."
+  (interactive)
+  (setq my/bibliography--row-cache nil)
+  (tabulated-list-print t))
+
 (defun bibliography-list-sort-by-column ()
   "Prompt for a column and sort the table by it (repeat to flip direction)."
   (interactive)
@@ -946,13 +1017,12 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
          (col (seq-position names name)))
     (tabulated-list-sort col)))
 
-(defun bibliography-list-set-filter (filter)
-  "Filter the table to entries whose columns contain FILTER."
-  (interactive
-   (list (read-string "Filter (author/title/tag substring, empty to clear): "
-                       bibliography-list--filter)))
-  (setq bibliography-list--filter (unless (string-empty-p filter) filter))
-  (tabulated-list-print t))
+(defun bibliography-list-set-filter ()
+  "Filter the table live as you type (any column); RET commits, C-g cancels."
+  (interactive)
+  (my/tabulated-list-read-filter
+   'bibliography-list--filter
+   "Filter (author/title/tag substring, empty to clear): "))
 
 (defun bibliography-list-clear-filter ()
   (interactive)
@@ -964,6 +1034,7 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 (define-key bibliography-list-mode-map (kbd "s") #'bibliography-list-sort-by-column)
 (define-key bibliography-list-mode-map (kbd "/") #'bibliography-list-set-filter)
 (define-key bibliography-list-mode-map (kbd "c") #'bibliography-list-clear-filter)
+(define-key bibliography-list-mode-map (kbd "g") #'bibliography-list-refresh)
 
 (defun my/bibliography-list ()
   (interactive)
