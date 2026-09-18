@@ -438,7 +438,7 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 (define-derived-mode lab-notebook-list-mode tabulated-list-mode "Lab-Notebook"
   "Major mode listing all lab notebook entries."
   (setq tabulated-list-format [("Page ID" 12 t) ("Date" 12 t) ("Title" 0 t)])
-  (setq tabulated-list-sort-key (cons "Page ID" nil))
+  (setq tabulated-list-sort-key (cons "Date" t)) ; most recent first
   (setq tabulated-list-entries #'my/lab-notebook-list--entries)
   (tabulated-list-init-header))
 
@@ -559,6 +559,15 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 
 (use-package ivy-prescient
   :after (ivy counsel)
+  :custom
+  ;; Frecency-sort everything EXCEPT commands where you're searching by
+  ;; content for one specific thing (a note, a citation) rather than
+  ;; picking from a short list of usual suspects.
+  (ivy-prescient-sort-commands
+   '(:not swiper swiper-isearch ivy-switch-buffer
+     vulpea-find vulpea-insert
+     citar-insert-citation citar-open citar-open-notes
+     citar-open-files citar-dwim))
   :config
   (ivy-prescient-mode 1))
 
@@ -870,20 +879,30 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   ;; `citar-has-notes'/`citar-has-files' return nil outright (not a
   ;; predicate) when *nothing* in the library has notes/files yet --
   ;; only a non-empty library gets a callable predicate back.
+  ;; Faces mirror `my/lab-notebook-list--entries': the "date-like"
+  ;; column gets `font-lock-comment-face', the "identifier-like" column
+  ;; gets `font-lock-keyword-face' -- both theme-aware, not hardcoded
+  ;; colors, so they follow whatever theme is active.
   (let ((has-notes (citar-has-notes))
         (has-files (citar-has-files)))
     (mapcar
      (lambda (key)
-       (let ((entry (citar-get-entry key)))
+       (let* ((entry (citar-get-entry key))
+              (year (or (citar-get-value "year" entry)
+                        (citar-get-value "date" entry) ""))
+              (author (or (citar-get-value "author" entry)
+                          (citar-get-value "editor" entry) ""))
+              (title (or (citar-get-value "title" entry) ""))
+              (tags (or (citar-get-value "keywords" entry) ""))
+              (has-note (and has-notes (funcall has-notes key)))
+              (has-file (and has-files (funcall has-files key))))
          (list key
-               (vector (or (citar-get-value "year" entry)
-                           (citar-get-value "date" entry) "")
-                       (or (citar-get-value "author" entry)
-                           (citar-get-value "editor" entry) "")
-                       (or (citar-get-value "title" entry) "")
-                       (or (citar-get-value "keywords" entry) "")
-                       (if (and has-notes (funcall has-notes key)) "Y" "")
-                       (if (and has-files (funcall has-files key)) "Y" "")))))
+               (vector (propertize year 'face 'font-lock-comment-face)
+                       (propertize author 'face 'font-lock-keyword-face)
+                       title
+                       (propertize tags 'face 'font-lock-string-face)
+                       (if has-note (propertize "Y" 'face 'success) "")
+                       (if has-file (propertize "Y" 'face 'success) "")))))
      (hash-table-keys (citar-get-entries)))))
 
 (defvar-local bibliography-list--filter nil
@@ -903,7 +922,7 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   "Major mode listing all bibliography entries."
   (setq tabulated-list-format [("Year" 6 t) ("Author" 25 t) ("Title" 0 t)
                                 ("Tags" 20 t) ("Note" 5 t) ("PDF" 5 t)])
-  (setq tabulated-list-sort-key (cons "Year" nil))
+  (setq tabulated-list-sort-key (cons "Year" t)) ; most recent first
   (setq tabulated-list-entries #'my/bibliography-list--entries)
   (tabulated-list-init-header))
 
