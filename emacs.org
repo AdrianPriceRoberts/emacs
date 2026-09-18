@@ -877,61 +877,6 @@ that has unsaved edits.
   (setq ivy-initial-inputs-alist nil)) ;; Don't start searches with ^
 
 #+end_src
-* Ivy Prescient
-For =M-x=, buffer-switching, and similar "pick from my usual suspects"
-commands, prescient's frecency-based ranking (recently/frequently *picked*
-candidates sort first) is exactly right, and its fuzzy filtering (e.g.
-"smh" matches "Smith") is a nice bonus. For "find this specific note/paper
-by typing part of its name" commands -- =vulpea-find=, =vulpea-insert=,
-citar's pickers -- both parts actively hurt:
-
-- *Ranking*: frecency has no concept of match quality. The first time you
-  search for something, every candidate ties on history, and the tiebreak
-  falls back to shortest-candidate-first -- so a long, exact-prefix match
-  (a title with extra trailing text) loses to a short, barely-related one
-  purely on length, burying the note you actually want.
-- *Filtering*: prescient's fuzzy method builds a loose "these characters
-  appear somewhere, in order, with any gap" regexp, which over hundreds of
-  candidates can surface distant, coincidental matches that don't belong
-  in the results at all -- more noise for a ranking step that already
-  can't sort it out.
-
-Two things fix this, both scoped to just the "search by content" commands
-(everything else keeps prescient's fuzzy filtering + frecency ranking):
-
-1. An explicit *nil* entry in =ivy-sort-functions-alist= for each of these
-   commands. This is different from (and actually works, unlike) just
-   excluding them from =ivy-prescient-sort-commands=: that variable only
-   controls whether =:sort t= gets *added* to a command's =ivy-read= call
-   when it's missing -- it does nothing when the command already passes
-   =:sort t= itself, which is exactly what buries the exact match here.
-   Setting the caller's own alist entry to =nil= is checked *before* the
-   catch-all default and wins outright, regardless of what =:sort= value
-   the command passes.
-2. An =ivy--regex-plus= override in =ivy-re-builders-alist= for the same
-   commands -- Ivy's own plain literal-substring builder instead of
-   prescient's fuzzy one, eliminating the noisy distant matches. Trade-off
-   worth knowing: =ivy--regex-plus= requires multi-word queries in the
-   *same order* as they appear in the candidate (e.g. "2020 smith" won't
-   match "... by Smith (2020)") -- less flexible than fuzzy, but precise,
-   which is what actually fixes "exact match doesn't show up on top."
-
-#+begin_src emacs-lisp
-  (use-package prescient
-    :config
-    (setq prescient-filter-method '(literal fuzzy))
-    (prescient-persist-mode 1))
-
-  (use-package ivy-prescient
-    :after (ivy counsel)
-    :config
-    (ivy-prescient-mode 1)
-    (dolist (caller '(vulpea-find vulpea-insert
-                       citar-insert-citation citar-open citar-open-notes
-                       citar-open-files citar-dwim))
-      (setf (alist-get caller ivy-sort-functions-alist) nil)
-      (setf (alist-get caller ivy-re-builders-alist) #'ivy--regex-plus)))
-#+end_src
 * Helpful
 #+begin_src emacs-lisp
 

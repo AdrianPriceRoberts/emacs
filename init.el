@@ -668,21 +668,6 @@ per-row features can hang off of."
   :config
   (setq ivy-initial-inputs-alist nil)) ;; Don't start searches with ^
 
-(use-package prescient
-  :config
-  (setq prescient-filter-method '(literal fuzzy))
-  (prescient-persist-mode 1))
-
-(use-package ivy-prescient
-  :after (ivy counsel)
-  :config
-  (ivy-prescient-mode 1)
-  (dolist (caller '(vulpea-find vulpea-insert
-                     citar-insert-citation citar-open citar-open-notes
-                     citar-open-files citar-dwim))
-    (setf (alist-get caller ivy-sort-functions-alist) nil)
-    (setf (alist-get caller ivy-re-builders-alist) #'ivy--regex-plus)))
-
 (use-package helpful
   :ensure t
   :custom
