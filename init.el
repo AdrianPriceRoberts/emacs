@@ -226,6 +226,139 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   (define-key org-mode-map (kbd "C-c C-x w") #'ap/org-attach-from-windows-clipboard)
   (define-key org-mode-map (kbd "C-c C-x v") #'ap/org-attach-clipboard-image))
 
+(use-package tablist)
+
+;; Splits comma/semicolon-separated TEXT into an OR-regexp of literal
+;; terms, e.g. "distillation, extraction" -> "distillation\|extraction"
+;; -- answers "check for a few different keywords" without requiring
+;; regexp syntax from the user.
+(defun my/browser--terms-regexp (text)
+  (mapconcat #'regexp-quote (split-string text "[,;]" t "[ \t]+") "\\|"))
+
+(defun my/browser--column-filter (column regexp)
+  "A tablist filter form: REGEXP against COLUMN, or every column if
+ COLUMN is nil (\"All columns\")."
+  (if column
+      (list '=~ column regexp)
+    (cl-reduce (lambda (a b) (list 'or a b))
+               (mapcar (lambda (name) (list '=~ name regexp))
+                       (mapcar #'car (append tabulated-list-format nil))))))
+
+(defun my/browser-filter ()
+  "Pick a column (or \"All columns\"), then push a filter for it onto
+ tablist's filter stack live as you type -- comma/semicolon-separate
+ multiple keywords for an OR match (e.g. \"distillation, extraction\").
+ Repeat to AND another column's filter on top of this one. RET keeps
+ it; C-g discards it and restores the filter stack to what it was
+ before this call."
+  (interactive)
+  (let* ((buf (current-buffer))
+         (base tablist-current-filter)
+         (col-names (mapcar #'car (append tabulated-list-format nil)))
+         (choice (completing-read "Filter by column: "
+                                   (cons "All columns" col-names)
+                                   nil t nil nil "All columns"))
+         (column (unless (string= choice "All columns") choice)))
+    (cl-flet ((live-apply
+               (text)
+               (with-current-buffer buf
+                 (setq tablist-current-filter
+                       (if (string-empty-p text)
+                           base
+                         (tablist-filter-push
+                          base (my/browser--column-filter
+                                column (my/browser--terms-regexp text)))))
+                 (tablist-apply-filter))))
+      (condition-case nil
+          (minibuffer-with-setup-hook
+              (lambda ()
+                (add-hook 'post-command-hook
+                          (lambda () (live-apply (minibuffer-contents-no-properties)))
+                          nil t))
+            (read-string (format "Filter [%s] (comma/semicolon = or): " choice)))
+        (quit
+         (with-current-buffer buf
+           (setq tablist-current-filter base)
+           (tablist-apply-filter))
+         (signal 'quit nil))))))
+
+(defun my/browser-clear-filter ()
+  (interactive)
+  (setq tablist-current-filter nil)
+  (tablist-apply-filter))
+
+(defun my/browser-sort-by-column ()
+  "Prompt for a column and sort the table by it (repeat to flip direction)."
+  (interactive)
+  (let* ((names (mapcar #'car (append tabulated-list-format nil)))
+         (name (completing-read "Sort by: " names nil t))
+         (col (seq-position names name)))
+    (tabulated-list-sort col)))
+
+(defun my/browser-refresh ()
+  "Invalidate this browser's row cache (`my/browser-refresh-function',
+ set by the specific major mode) and redisplay. Any active filter
+ stays applied."
+  (interactive)
+  (when my/browser-refresh-function
+    (funcall my/browser-refresh-function))
+  (tabulated-list-print t))
+
+(defvar my/browser-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "g" #'my/browser-refresh)
+    (define-key map "s" #'my/browser-sort-by-column)
+    (define-key map "/" #'my/browser-filter)
+    (define-key map "c" #'my/browser-clear-filter)
+    map)
+  "Keymap for `my/browser-mode'.")
+
+(defvar-local my/browser-eldoc-hint nil
+  "Static hint string shown in the echo area once idle; set by the
+ specific derived major mode before turning on `my/browser-mode'.")
+
+(defvar-local my/browser-refresh-function nil
+  "Zero-arg function invalidating this browser's row cache; set by the
+ specific derived major mode before turning on `my/browser-mode'.")
+
+(defvar my/browser-point-entry-functions nil
+  "Abnormal hook, args (ID ENTRY), run when point moves onto a
+ different row in a `my/browser-mode' buffer -- the same ID/ENTRY
+ `tabulated-list-get-id'/`tabulated-list-get-entry' return for the row
+ now at point. Reserved for future per-row features; empty for now.")
+
+(defvar-local my/browser--last-point-id 'my/browser-unset)
+
+(defun my/browser--check-point-entry ()
+  (when (derived-mode-p 'tabulated-list-mode)
+    (let ((id (tabulated-list-get-id)))
+      (unless (equal id my/browser--last-point-id)
+        (setq my/browser--last-point-id id)
+        (when id
+          (run-hook-with-args 'my/browser-point-entry-functions
+                               id (tabulated-list-get-entry)))))))
+
+(define-minor-mode my/browser-mode
+  "Shared behavior for the browsing buffers in this config: an eldoc
+keybinding hint, a refreshable row cache, tablist-backed multi-column
+live filtering, generic column sorting, and a point-entry hook future
+per-row features can hang off of."
+  :lighter " Browser"
+  :keymap my/browser-mode-map
+  (if my/browser-mode
+      (progn
+        (tablist-minor-mode 1)
+        (when my/browser-eldoc-hint
+          (setq-local eldoc-idle-delay 1.5)
+          (add-hook 'eldoc-documentation-functions
+                    (let ((hint my/browser-eldoc-hint))
+                      (lambda (callback &rest _) (funcall callback hint)))
+                    nil t)
+          (eldoc-mode 1))
+        (add-hook 'post-command-hook #'my/browser--check-point-entry nil t))
+    (tablist-minor-mode -1)
+    (remove-hook 'post-command-hook #'my/browser--check-point-entry t)))
+
 ;; Make sure the ~/org/ directory exists:
 (unless (file-exists-p "~/org/")
   (make-directory "~/org/" t))   
@@ -415,100 +548,15 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 (add-hook 'org-mode-hook #'my/lab-notebook-entry-mode-maybe-enable)
 
 ;; Tabulated overview buffer -------------------------------------------
+;; Sorting, filtering, the row cache, and the eldoc hint all come from
+;; `my/browser-mode' (see "Browser Infrastructure" near the top of this
+;; file) -- this is only what's actually specific to lab notebook notes:
+;; the columns, how to build a row, and what RET does.
 
-;; Shared with the *Bibliography* browser (defined below, in the
-;; Citations section). FILTER-VAR (a buffer-local variable symbol,
-;; already `defvar-local'd) holds either nil (no filter) or a cons
-;; (COLUMN-INDEX-OR-NIL . TEXT), where a nil COLUMN-INDEX means "any
-;; column" -- mirrors `tabulated-list-sort''s own "pick a column"
-;; prompt (the ~s~ key), rather than defaulting to a single blind
-;; all-columns text search.
-(defun my/tabulated-list-read-filter (filter-var label)
-  "Prompt for a column (or \"All columns\"), then read a filter string
- for it into FILTER-VAR, live-updating the calling buffer's table after
- every keystroke -- the same way `citar-insert-citation'/`vulpea-find'
- narrow as you type. RET commits; C-g restores whatever FILTER-VAR held
- before this call started."
-  (let* ((buf (current-buffer))
-         (prev (symbol-value filter-var))
-         (col-names (mapcar #'car (append tabulated-list-format nil)))
-         (choice (completing-read (format "Filter %s by column: " label)
-                                   (cons "All columns" col-names)
-                                   nil t nil nil "All columns"))
-         (col-index (unless (string= choice "All columns")
-                      (seq-position col-names choice))))
-    (condition-case nil
-        (minibuffer-with-setup-hook
-            (lambda ()
-              (add-hook
-               'post-command-hook
-               (lambda ()
-                 (when (buffer-live-p buf)
-                   (let ((input (minibuffer-contents-no-properties)))
-                     (with-current-buffer buf
-                       (set filter-var (unless (string-empty-p input)
-                                         (cons col-index input)))
-                       (tabulated-list-print t)))))
-               nil t))
-          (read-string (format "Filter [%s] %s: " choice label)
-                        (and prev (cdr prev))))
-      (quit
-       (with-current-buffer buf
-         (set filter-var prev)
-         (tabulated-list-print t))
-       (signal 'quit nil)))))
-
-;; Shared with *Bibliography*: filter ROWS (each a (id . [col...]) pair,
-;; columns already themed via `propertize') to those matching FILTER --
-;; a (COLUMN-INDEX-OR-NIL . TEXT) cons, or nil for no filter -- marking
-;; the matched span with the `match' face, the same face isearch/occur/
-;; grep-mode use for "here's what you searched for," so a live-filtered
-;; table looks and behaves like the ivy pickers rather than just
-;; narrowing silently.
-(defun my/tabulated-list--filter-rows (rows filter)
-  (if (not filter)
-      rows
-    (let ((col-index (car filter))
-          (regexp (regexp-quote (cdr filter))))
-      (seq-keep
-       (lambda (row)
-         (let (hit)
-           (let ((cols (cl-loop
-                        for col in (append (cadr row) nil)
-                        for i from 0
-                        collect
-                        (if (and (or (not col-index) (= i col-index))
-                                 (string-match regexp col))
-                            (let ((s (copy-sequence col)))
-                              (setq hit t)
-                              (add-face-text-property
-                               (match-beginning 0) (match-end 0) 'match t s)
-                              s)
-                          col))))
-             (when hit
-               (list (car row) (apply #'vector cols))))))
-       rows))))
-
-;; Shared with *Bibliography*: show HINT in the echo area once idle,
-;; via eldoc rather than a header-line splice (low-contrast by default,
-;; and not where anyone looks) or a hand-rolled timer (would fight
-;; whatever message a recent command just printed). eldoc already
-;; handles "wait until idle, don't clobber an active message or
-;; minibuffer, refresh automatically" -- exactly what's wanted here.
-(defun my/tabulated-list-eldoc-setup (hint)
-  (setq-local eldoc-idle-delay 1.5)
-  (add-hook 'eldoc-documentation-functions
-            (lambda (callback &rest _) (funcall callback hint))
-            nil t)
-  (eldoc-mode 1))
-
-(defvar-local lab-notebook-list--filter nil
-  "Nil, or (COLUMN-INDEX-OR-NIL . TEXT); nil index means any column.")
-
-;; Cached so live-filter keystrokes just re-filter an in-memory list
-;; instead of re-querying Vulpea's DB on every character typed. `g'
-;; clears the cache to pick up new/changed notes.
 (defvar-local my/lab-notebook--row-cache nil)
+
+(defun my/lab-notebook--invalidate-cache ()
+  (setq my/lab-notebook--row-cache nil))
 
 (defun my/lab-notebook--all-rows ()
   (or my/lab-notebook--row-cache
@@ -524,51 +572,22 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
                                title))))
              (my/lab-notebook--notes)))))
 
-(defun my/lab-notebook-list--entries ()
-  (my/tabulated-list--filter-rows (my/lab-notebook--all-rows) lab-notebook-list--filter))
-
 (define-derived-mode lab-notebook-list-mode tabulated-list-mode "Lab-Notebook"
   "Major mode listing all lab notebook entries."
   (setq tabulated-list-format [("Page ID" 12 t) ("Date" 12 t) ("Title" 0 t)])
   (setq tabulated-list-sort-key (cons "Date" t)) ; most recent first
-  (setq tabulated-list-entries #'my/lab-notebook-list--entries)
+  (setq tabulated-list-entries #'my/lab-notebook--all-rows)
   (tabulated-list-init-header)
-  (my/tabulated-list-eldoc-setup "s:sort  /:filter  c:clear  g:refresh  RET:open"))
+  (setq my/browser-eldoc-hint "s:sort  /:filter  c:clear  g:refresh  RET:open")
+  (setq my/browser-refresh-function #'my/lab-notebook--invalidate-cache)
+  (my/browser-mode 1))
 
 (defun lab-notebook-list-visit ()
   (interactive)
   (let ((path (tabulated-list-get-id)))
     (when path (find-file path))))
 
-(defun lab-notebook-list-refresh ()
-  "Forget the cached rows and re-scan Vulpea for new/changed notes."
-  (interactive)
-  (setq my/lab-notebook--row-cache nil)
-  (tabulated-list-print t))
-
-(defun lab-notebook-list-sort-by-column ()
-  "Prompt for a column and sort the table by it (repeat to flip direction)."
-  (interactive)
-  (let* ((names (mapcar #'car (append tabulated-list-format nil)))
-         (name (completing-read "Sort by: " names nil t))
-         (col (seq-position names name)))
-    (tabulated-list-sort col)))
-
-(defun lab-notebook-list-set-filter ()
-  "Pick a column (or all), then filter live as you type; RET commits, C-g cancels."
-  (interactive)
-  (my/tabulated-list-read-filter 'lab-notebook-list--filter "text"))
-
-(defun lab-notebook-list-clear-filter ()
-  (interactive)
-  (setq lab-notebook-list--filter nil)
-  (tabulated-list-print t))
-
 (define-key lab-notebook-list-mode-map (kbd "RET") #'lab-notebook-list-visit)
-(define-key lab-notebook-list-mode-map (kbd "s") #'lab-notebook-list-sort-by-column)
-(define-key lab-notebook-list-mode-map (kbd "/") #'lab-notebook-list-set-filter)
-(define-key lab-notebook-list-mode-map (kbd "c") #'lab-notebook-list-clear-filter)
-(define-key lab-notebook-list-mode-map (kbd "g") #'lab-notebook-list-refresh)
 
 (defun my/lab-notebook-list ()
   (interactive)
@@ -968,10 +987,10 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
 
 (use-package auctex)
 
-;; Cached per buffer-session for the same reason as the Lab Notebook
-;; row cache: live-filter keystrokes should just re-filter an in-memory
-;; list, not re-walk citar's whole library on every character typed.
 (defvar-local my/bibliography--row-cache nil)
+
+(defun my/bibliography--invalidate-cache ()
+  (setq my/bibliography--row-cache nil))
 
 (defun my/bibliography--all-rows ()
   (or my/bibliography--row-cache
@@ -980,11 +999,6 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
             ;; (not a predicate) when *nothing* in the library has
             ;; notes/files yet -- only a non-empty library gets a
             ;; callable predicate back.
-            ;; Faces mirror `my/lab-notebook-list--entries': the
-            ;; "date-like" column gets `font-lock-comment-face', the
-            ;; "identifier-like" column gets `font-lock-keyword-face'
-            ;; -- both theme-aware, not hardcoded colors, so they
-            ;; follow whatever theme is active.
             (let ((has-notes (citar-has-notes))
                   (has-files (citar-has-files)))
               (mapcar
@@ -1007,20 +1021,16 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
                                  (if has-file (propertize "Y" 'face 'success) "")))))
                (hash-table-keys (citar-get-entries)))))))
 
-(defvar-local bibliography-list--filter nil
-  "Nil, or (COLUMN-INDEX-OR-NIL . TEXT); nil index means any column.")
-
-(defun my/bibliography-list--entries ()
-  (my/tabulated-list--filter-rows (my/bibliography--all-rows) bibliography-list--filter))
-
 (define-derived-mode bibliography-list-mode tabulated-list-mode "Bibliography"
   "Major mode listing all bibliography entries."
   (setq tabulated-list-format [("Year" 6 t) ("Author" 25 t) ("Title" 0 t)
                                 ("Tags" 20 t) ("Note" 5 t) ("PDF" 5 t)])
   (setq tabulated-list-sort-key (cons "Year" t)) ; most recent first
-  (setq tabulated-list-entries #'my/bibliography-list--entries)
+  (setq tabulated-list-entries #'my/bibliography--all-rows)
   (tabulated-list-init-header)
-  (my/tabulated-list-eldoc-setup "s:sort  /:filter  c:clear  g:refresh  RET:note  o:pdf"))
+  (setq my/browser-eldoc-hint "s:sort  /:filter  c:clear  g:refresh  RET:note  o:pdf")
+  (setq my/browser-refresh-function #'my/bibliography--invalidate-cache)
+  (my/browser-mode 1))
 
 (defun bibliography-list-visit ()
   "Open (or create) the reference note for the entry at point."
@@ -1034,36 +1044,8 @@ $i.Save('%s',[System.Drawing.Imaging.ImageFormat]::Png)" win))
   (when-let ((key (tabulated-list-get-id)))
     (citar-open-files (list key))))
 
-(defun bibliography-list-refresh ()
-  "Forget the cached rows and re-scan citar's library for changes."
-  (interactive)
-  (setq my/bibliography--row-cache nil)
-  (tabulated-list-print t))
-
-(defun bibliography-list-sort-by-column ()
-  "Prompt for a column and sort the table by it (repeat to flip direction)."
-  (interactive)
-  (let* ((names (mapcar #'car (append tabulated-list-format nil)))
-         (name (completing-read "Sort by: " names nil t))
-         (col (seq-position names name)))
-    (tabulated-list-sort col)))
-
-(defun bibliography-list-set-filter ()
-  "Pick a column (or all), then filter live as you type; RET commits, C-g cancels."
-  (interactive)
-  (my/tabulated-list-read-filter 'bibliography-list--filter "text"))
-
-(defun bibliography-list-clear-filter ()
-  (interactive)
-  (setq bibliography-list--filter nil)
-  (tabulated-list-print t))
-
 (define-key bibliography-list-mode-map (kbd "RET") #'bibliography-list-visit)
 (define-key bibliography-list-mode-map (kbd "o") #'bibliography-list-open-file)
-(define-key bibliography-list-mode-map (kbd "s") #'bibliography-list-sort-by-column)
-(define-key bibliography-list-mode-map (kbd "/") #'bibliography-list-set-filter)
-(define-key bibliography-list-mode-map (kbd "c") #'bibliography-list-clear-filter)
-(define-key bibliography-list-mode-map (kbd "g") #'bibliography-list-refresh)
 
 (defun my/bibliography-list ()
   (interactive)
