@@ -78,6 +78,22 @@
   (interactive)
   (org-insert-time-stamp (current-time) t))
 
+(use-package eat :ensure t)
+
+;; claude-code.el isn't on any package archive; package-vc-install
+;; fetches it straight from GitHub (built into Emacs 29+).
+(unless (package-installed-p 'claude-code)
+  (package-vc-install "https://github.com/stevemolitor/claude-code.el"))
+
+;; Loaded before Custom Keybinds below, so claude-code-command-map
+;; already exists as a real keymap by the time general-define-key
+;; binds it -- referencing it before this block runs makes the
+;; symbol autoload incorrectly and fail with "Autoloading file
+;; ... failed to define function claude-code-command-map".
+(use-package claude-code
+  :custom (claude-code-terminal-backend 'eat)
+  :config (claude-code-mode))
+
 ;; Make ESC quit prompts
 (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
 
@@ -1047,17 +1063,6 @@ per-row features can hang off of."
  "b" 'citar-insert-citation
  "n" 'citar-open-notes
  "r" 'my/bibliography-list)
-
-(use-package eat :ensure t)
-
-;; claude-code.el isn't on any package archive; package-vc-install
-;; fetches it straight from GitHub (built into Emacs 29+).
-(unless (package-installed-p 'claude-code)
-  (package-vc-install "https://github.com/stevemolitor/claude-code.el"))
-
-(use-package claude-code
-  :custom (claude-code-terminal-backend 'eat)
-  :config (claude-code-mode))
 
 ;; Per-machine settings that should never sync between machines.
 ;; Not tracked in git -- create local.el separately on each machine.
