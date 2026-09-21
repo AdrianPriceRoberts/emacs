@@ -4,7 +4,8 @@
 
 (setq package-archives '(("melpa" . "https://melpa.org/packages/")
                          ("org" . "https://orgmode.org/elpa/")
-                         ("elpa" . "https://elpa.gnu.org/packages/")))
+                         ("elpa" . "https://elpa.gnu.org/packages/")
+                         ("nongnu" . "https://elpa.nongnu.org/nongnu/")))
 
 (package-initialize)
 (unless package-archive-contents
@@ -90,7 +91,8 @@
   "f" 'vulpea-find
   "i" 'vulpea-insert
   "t" 'my-org-insert-current-datetime
-  "l" 'my/lab-notebook-list)
+  "l" 'my/lab-notebook-list
+  "a" 'claude-code-command-map)
 
 (use-package which-key
   :init (which-key-mode)
@@ -1045,3 +1047,22 @@ per-row features can hang off of."
  "b" 'citar-insert-citation
  "n" 'citar-open-notes
  "r" 'my/bibliography-list)
+
+(use-package eat :ensure t)
+
+;; claude-code.el isn't on any package archive; package-vc-install
+;; fetches it straight from GitHub (built into Emacs 29+).
+(unless (package-installed-p 'claude-code)
+  (package-vc-install "https://github.com/stevemolitor/claude-code.el"))
+
+(use-package claude-code
+  :custom (claude-code-terminal-backend 'eat)
+  :config (claude-code-mode))
+
+;; Per-machine settings that should never sync between machines.
+;; Not tracked in git -- create local.el separately on each machine.
+;; Keep this heading last in the file: init.el runs top to bottom, so
+;; whatever local.el sets here overrides everything defined above it.
+(let ((local (expand-file-name "local.el" user-emacs-directory)))
+  (when (file-exists-p local)
+    (load local)))
