@@ -91,6 +91,7 @@
 ;; symbol autoload incorrectly and fail with "Autoloading file
 ;; ... failed to define function claude-code-command-map".
 (use-package claude-code
+  :demand t
   :custom (claude-code-terminal-backend 'eat)
   :config (claude-code-mode))
 
@@ -108,7 +109,15 @@
   "i" 'vulpea-insert
   "t" 'my-org-insert-current-datetime
   "l" 'my/lab-notebook-list
-  "a" 'claude-code-command-map)
+  ;; unquoted: bind the keymap's actual value, not the bare
+  ;; symbol -- a quoted symbol here gets resolved later via
+  ;; indirect-function, which follows claude-code-command-map's
+  ;; function cell rather than its value cell and falls through
+  ;; to a stale autoload stub ("Autoloading file ... failed to
+  ;; define function claude-code-command-map"). Binding the
+  ;; already-loaded keymap value directly (see :demand t above)
+  ;; sidesteps the autoload path entirely.
+  "a" claude-code-command-map)
 
 (use-package which-key
   :init (which-key-mode)
