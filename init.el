@@ -636,10 +636,45 @@ per-row features can hang off of."
       kept-old-versions 5
       backup-directory-alist '(("." . "~/.emacs.d/backups")))
 
+(defun my/journal-file-p (&optional file)
+  "Non-nil if FILE (default: the current buffer's file) is a daily journal entry."
+  (when-let ((file (or file (buffer-file-name))))
+    (string-match-p "/org/daily/[^/]+\\.org\\'" file)))
+
+(defun my/journal-body-text ()
+  "Return the current buffer's journal content with template scaffolding stripped.
+Strips the :PROPERTIES: drawer, #+title/#+filetags/#+created lines, the
+\"* Notes\" heading, and blank lines, leaving only what was actually typed."
+  (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+    (with-temp-buffer
+      (insert text)
+      (goto-char (point-min))
+      (when (re-search-forward "^[ \t]*:PROPERTIES:\n\\(?:.*\n\\)*?[ \t]*:END:\n" nil t)
+        (replace-match ""))
+      (goto-char (point-min))
+      (while (re-search-forward "^#\\+\\(title\\|filetags\\|created\\):.*\n" nil t)
+        (replace-match ""))
+      (goto-char (point-min))
+      (when (re-search-forward "^\\*+[ \t]+Notes[ \t]*\n" nil t)
+        (replace-match ""))
+      (string-trim (buffer-substring-no-properties (point-min) (point-max))))))
+
+(defun my/journal-template-only-p ()
+  "Non-nil if the current journal buffer has no real content beyond the template."
+  (string-empty-p (my/journal-body-text)))
+
+(defun my/effectively-empty-buffer-p ()
+  "Non-nil if the current buffer has no content worth protecting.
+For daily journal files this means template-only; for everything else,
+truly zero bytes (the original, narrower check)."
+  (if (my/journal-file-p)
+      (my/journal-template-only-p)
+    (= (buffer-size) 0)))
+
 (defun my/guard-empty-overwrite (fn &rest args)
   (when (and (buffer-file-name)
              (file-exists-p (buffer-file-name))
-             (= (buffer-size) 0)
+             (my/effectively-empty-buffer-p)
              (> (file-attribute-size (file-attributes (buffer-file-name))) 0))
     (unless (yes-or-no-p
              (format "Buffer for %s is EMPTY but disk file has content. Save anyway? "
@@ -660,6 +695,60 @@ per-row features can hang off of."
 (global-auto-revert-mode 1)
 (setq auto-revert-avoid-polling-method 'watch
       auto-revert-verbose nil)
+
+(defvar-local my/journal-conflict-pending nil
+  "Non-nil while a journal conflict prompt is scheduled or open for this buffer.")
+
+(defun my/journal-buffer-stale-function (&optional noconfirm)
+  "`buffer-stale-function' for daily journal buffers.
+Defers to the default staleness check; if the file changed on disk and
+this buffer still has real content, never silently revert -- schedule
+a conflict prompt instead and report \"not stale\" so auto-revert
+leaves the buffer alone until the user decides."
+  (let ((default-stale (buffer-stale--default-function noconfirm)))
+    (cond
+     ((not default-stale) default-stale)
+     ((my/journal-template-only-p) default-stale)
+     (my/journal-conflict-pending nil)
+     (t
+      (setq my/journal-conflict-pending t)
+      (run-with-timer 0 nil #'my/journal-handle-conflict (current-buffer))
+      nil))))
+
+(defun my/journal-ediff-merge (buffer)
+  "Open an ediff session merging BUFFER against what is currently on disk."
+  (let ((disk-buf (generate-new-buffer (format " *disk:%s*" (buffer-name buffer)))))
+    (with-current-buffer disk-buf
+      (insert-file-contents-literally (buffer-file-name buffer))
+      (setq buffer-read-only t))
+    (ediff-buffers disk-buf buffer)))
+
+(defun my/journal-handle-conflict (buffer)
+  "Prompt the user to resolve a blocked auto-revert conflict on BUFFER."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (unwind-protect
+          (progn
+            (diff-buffer-with-file buffer)
+            (when-let ((win (get-buffer-window "*Diff*")))
+              (select-window win))
+            (pcase (car (read-multiple-choice
+                         (format "Buffer %s has content but the file changed on disk. What now?"
+                                 (buffer-name))
+                         '((?k "keep buffer" "Discard the disk change; keep this buffer as-is.")
+                           (?t "take disk" "Discard this buffer's content; load what is on disk.")
+                           (?e "merge" "Open an ediff session to merge the two by hand."))))
+              (?t (revert-buffer 'ignore-auto 'dont-ask 'preserve-modes))
+              (?e (my/journal-ediff-merge buffer))
+              (_ nil)))
+        (when (get-buffer "*Diff*")
+          (kill-buffer "*Diff*"))
+        (setq my/journal-conflict-pending nil)))))
+
+(add-hook 'find-file-hook
+          (lambda ()
+            (when (my/journal-file-p)
+              (setq-local buffer-stale-function #'my/journal-buffer-stale-function))))
 
 (use-package ivy
     :diminish
