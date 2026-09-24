@@ -54,6 +54,10 @@
 
 (load-theme 'doom-laserwave t)
 
+(custom-theme-set-faces
+ 'doom-laserwave
+ '(gnus-group-news-low-empty ((t :inherit gnus-group-mail-1-empty))))
+
 ;; Rainbow brackets
 (use-package rainbow-delimiters
   :hook (prog-mode . rainbow-delimiters-mode))
@@ -696,6 +700,25 @@ truly zero bytes (the original, narrower check)."
 (setq auto-revert-avoid-polling-method 'watch
       auto-revert-verbose nil)
 
+(defun my/diff-and-choose (show-diff prompt choices)
+  "Call SHOW-DIFF to display a *Diff* buffer, then ask PROMPT with CHOICES.
+CHOICES is a `read-multiple-choice' list; return the chosen key.  The
+question is always asked in the minibuffer, never as a GUI dialog.  The
+*Diff* buffer is killed and the window layout restored afterwards.
+SHOW-DIFF may be nil to just ask."
+  (let ((use-dialog-box nil))
+    (save-current-buffer
+      (save-window-excursion
+        (unwind-protect
+            (progn
+              (when show-diff
+                (funcall show-diff)
+                (when-let* ((win (get-buffer-window "*Diff*")))
+                  (select-window win)))
+              (car (read-multiple-choice prompt choices)))
+          (when (get-buffer "*Diff*")
+            (kill-buffer "*Diff*")))))))
+
 (defvar-local my/journal-conflict-pending nil
   "Non-nil while a journal conflict prompt is scheduled or open for this buffer.")
 
@@ -728,27 +751,296 @@ leaves the buffer alone until the user decides."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (unwind-protect
-          (progn
-            (diff-buffer-with-file buffer)
-            (when-let ((win (get-buffer-window "*Diff*")))
-              (select-window win))
-            (pcase (car (read-multiple-choice
-                         (format "Buffer %s has content but the file changed on disk. What now?"
-                                 (buffer-name))
-                         '((?k "keep buffer" "Discard the disk change; keep this buffer as-is.")
-                           (?t "take disk" "Discard this buffer's content; load what is on disk.")
-                           (?e "merge" "Open an ediff session to merge the two by hand."))))
-              (?t (revert-buffer 'ignore-auto 'dont-ask 'preserve-modes))
-              (?e (my/journal-ediff-merge buffer))
-              (_ nil)))
-        (when (get-buffer "*Diff*")
-          (kill-buffer "*Diff*"))
+          (pcase (my/diff-and-choose
+                  (lambda () (diff-buffer-with-file buffer))
+                  (format "Buffer %s has content but the file changed on disk. What now?"
+                          (buffer-name))
+                  '((?k "keep buffer" "Discard the disk change; keep this buffer as-is.")
+                    (?t "take disk" "Discard this buffer's content; load what is on disk.")
+                    (?e "merge" "Open an ediff session to merge the two by hand.")))
+            (?t (revert-buffer 'ignore-auto 'dont-ask 'preserve-modes))
+            (?e (my/journal-ediff-merge buffer))
+            (_ nil))
         (setq my/journal-conflict-pending nil)))))
 
 (add-hook 'find-file-hook
           (lambda ()
             (when (my/journal-file-p)
               (setq-local buffer-stale-function #'my/journal-buffer-stale-function))))
+
+(defconst my/sync-conflict-regexp
+  "\\.sync-conflict-[0-9]\\{8\\}-[0-9]\\{6\\}-\\([A-Z0-9]\\{7\\}\\)"
+  "Matches the marker Syncthing inserts into conflict copy file names.
+Group 1 is the short ID of the device that wrote the conflicting copy.")
+
+(defvar my/sync-conflict-skipped nil
+  "Conflict files skipped this session; not offered again until restart.")
+
+(defun my/sync-conflicts ()
+  "Return all unskipped Syncthing conflict files under ~/org, oldest name first."
+  (seq-remove (lambda (file) (member file my/sync-conflict-skipped))
+              (sort (directory-files-recursively
+                     "~/org" my/sync-conflict-regexp nil
+                     ;; Skip .stversions, .stfolder and other dot directories.
+                     (lambda (dir)
+                       (not (string-prefix-p "." (file-name-nondirectory dir)))))
+                    #'string<)))
+
+(defun my/sync-conflict-original (conflict)
+  "Return the file that CONFLICT is a Syncthing conflict copy of."
+  (replace-regexp-in-string my/sync-conflict-regexp "" conflict))
+
+(defun my/file-string (file)
+  "Return FILE's contents as a string."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (buffer-string)))
+
+(defun my/journal-text-template-only-p (text)
+  "Non-nil if journal TEXT has no real content beyond the template."
+  (with-temp-buffer
+    (insert text)
+    (my/journal-template-only-p)))
+
+(defun my/sync-conflict-trash (conflict)
+  "Kill any buffer visiting CONFLICT and move the file to the trash."
+  (when-let* ((buf (find-buffer-visiting conflict)))
+    (kill-buffer buf))
+  (let ((delete-by-moving-to-trash t))
+    (delete-file conflict t))
+  (message "Trashed %s" (file-name-nondirectory conflict)))
+
+(defun my/buffer-ids ()
+  "Return every :ID: property value in the current buffer, in order."
+  (let (ids)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^[ \t]*:ID:[ \t]+\\(\\S-+\\)[ \t]*$" nil t)
+        (push (match-string-no-properties 1) ids)))
+    (nreverse ids)))
+
+(defun my/dedupe-drawer-properties ()
+  "Drop repeated properties within each property drawer; the first one wins.
+KEY+ lines (Org's way of appending to a value) are left alone.  Return an
+alist of (DROPPED-ID . KEPT-ID) for every :ID: line removed."
+  (let ((case-fold-search t)
+        dropped)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^[ \t]*:PROPERTIES:[ \t]*$" nil t)
+        (let ((end (save-excursion
+                     (and (re-search-forward "^[ \t]*:END:[ \t]*$" nil t)
+                          (copy-marker (match-beginning 0)))))
+              seen)
+          (forward-line 1)
+          (while (and end (< (point) end))
+            (if (looking-at "[ \t]*:\\([^: \t\n]+\\):[ \t]*\\(.*?\\)[ \t]*$")
+                (let ((key (upcase (match-string-no-properties 1)))
+                      (value (match-string-no-properties 2)))
+                  (cond
+                   ((string-suffix-p "+" key)
+                    (forward-line 1))
+                   ((assoc key seen)
+                    (when (equal key "ID")
+                      (push (cons value (cdr (assoc key seen))) dropped))
+                    (delete-region (line-beginning-position) (line-beginning-position 2)))
+                   (t
+                    (push (cons key value) seen)
+                    (forward-line 1))))
+              (forward-line 1))))))
+    (nreverse dropped)))
+
+(defun my/id-link-files (id)
+  "Return the .org files under ~/org that link to ID (conflict copies excluded)."
+  (seq-remove (lambda (file) (string-match-p my/sync-conflict-regexp file))
+              (process-lines-ignore-status
+               "grep" "-rlF" "--include=*.org" "--exclude-dir=.*"
+               "-e" (concat "id:" id) (expand-file-name "~/org"))))
+
+(defun my/offer-id-link-redirect (old new)
+  "If any note links to id:OLD, offer to point those links at id:NEW."
+  (when-let* ((files (my/id-link-files old)))
+    (when (eq ?r (my/diff-and-choose
+                  nil
+                  (format "%d file%s to id:%s, which no longer exists (the note is now id:%s):"
+                          (length files) (if (cdr files) "s link" " links") old new)
+                  '((?r "redirect" "Point those links at the ID that was kept.")
+                    (?l "leave" "Leave the links as they are."))))
+      (dolist (file files)
+        (with-current-buffer (find-file-noselect file)
+          (save-excursion
+            (goto-char (point-min))
+            (while (search-forward (concat "id:" old) nil t)
+              (replace-match (concat "id:" new) t t)))
+          (save-buffer)))
+      (message "Redirected links in %d file%s to id:%s"
+               (length files) (if (cdr files) "s" "") new))))
+
+(defun my/tidy-ids-and-save (before)
+  "Drop repeated drawer properties in the current buffer and save it.
+BEFORE is the buffer's list of IDs before it was changed; for any of those
+that is now gone, offer to redirect links to it."
+  (let ((dropped (my/dedupe-drawer-properties)))
+    (save-buffer)
+    (let ((after (my/buffer-ids))
+          (file-id (org-entry-get (point-min) "ID")))
+      (dolist (id (seq-difference (seq-uniq (append before (mapcar #'car dropped)))
+                                  after))
+        (when-let* ((target (or (cdr (assoc id dropped)) file-id)))
+          (my/offer-id-link-redirect id target))))
+    dropped))
+
+(defun my/fix-duplicate-properties ()
+  "Remove repeated properties from this buffer's drawers, keeping the first.
+Saves the buffer, and offers to redirect links to any :ID: that was removed."
+  (interactive)
+  (message (if (my/tidy-ids-and-save (my/buffer-ids))
+               "Removed duplicate properties"
+             "No duplicate properties")))
+
+(defun my/sync-conflict-write (original text)
+  "Replace ORIGINAL's contents with TEXT and save, through its normal buffer.
+Repeated drawer properties (e.g. both machines' :ID:) are reduced to the
+first, and links to any ID that disappears are offered a redirect."
+  (with-current-buffer (find-file-noselect original)
+    (let ((before (my/buffer-ids)))
+      (erase-buffer)
+      (insert text)
+      (my/tidy-ids-and-save before))))
+
+(defun my/sync-conflict-original-text (original)
+  "Return ORIGINAL's text, from its open buffer if there is one.
+That way unsaved typing counts, rather than only what's on disk."
+  (if-let* ((buf (find-buffer-visiting original)))
+      (with-current-buffer buf (buffer-string))
+    (my/file-string original)))
+
+(defun my/sync-conflict-union (original conflict)
+  "Return ORIGINAL and CONFLICT combined, keeping every line of both.
+Shared lines appear once; where they differ, ORIGINAL's lines come first,
+then CONFLICT's.  Uses GNU diff's line formats to print every line
+unmarked, so there are no conflict markers in the result."
+  (let ((tmp (make-temp-file "sync-conflict-original")))
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert (my/sync-conflict-original-text original)))
+          (with-temp-buffer
+            ;; diff exits 0 for no differences, 1 for some, 2 for trouble.
+            (unless (memq (call-process "diff" nil t nil
+                                        "--unchanged-line-format=%L"
+                                        "--old-line-format=%L"
+                                        "--new-line-format=%L"
+                                        tmp (expand-file-name conflict))
+                          '(0 1))
+              (error "diff failed: %s" (buffer-string)))
+            (buffer-string)))
+      (delete-file tmp))))
+
+(defun my/sync-conflict-auto-resolve (conflict original)
+  "Resolve CONFLICT without asking if one side has nothing worth keeping.
+Return non-nil if it was resolved."
+  (let ((text (my/file-string conflict))
+        (orig-text (my/sync-conflict-original-text original))
+        (journal (my/journal-file-p original)))
+    (cond
+     ((or (string= text orig-text)
+          (and journal (my/journal-text-template-only-p text)))
+      (my/sync-conflict-trash conflict)
+      t)
+     ((and journal (my/journal-text-template-only-p orig-text))
+      (my/sync-conflict-write original text)
+      (my/sync-conflict-trash conflict)
+      (message "%s was only the template; took the conflict copy's content"
+               (file-name-nondirectory original))
+      t))))
+
+(defun my/resolve-sync-conflict (conflict)
+  "Show the diff between CONFLICT and its original, then ask what to do."
+  (interactive
+   (let ((conflicts (my/sync-conflicts)))
+     (unless conflicts (user-error "No Syncthing conflict files under ~/org"))
+     (list (completing-read "Resolve conflict: " conflicts nil t nil nil
+                            (car conflicts)))))
+  (let ((original (my/sync-conflict-original conflict))
+        (device (and (string-match my/sync-conflict-regexp conflict)
+                     (match-string 1 conflict))))
+    (cond
+     ((not (file-exists-p original))
+      (pcase (my/diff-and-choose
+              nil
+              (format "%s is gone but has a conflict copy from %s:"
+                      (file-name-nondirectory original) device)
+              '((?r "restore" "Rename the conflict copy back to the original name.")
+                (?s "skip" "Leave it for now.")))
+        (?r (rename-file conflict original))
+        (_ (push conflict my/sync-conflict-skipped))))
+     ((my/sync-conflict-auto-resolve conflict original))
+     (t
+      (pcase (my/diff-and-choose
+              (lambda ()
+                (diff (or (find-buffer-visiting original) original)
+                      conflict nil 'no-async))
+              (format "%s vs conflict copy from %s:"
+                      (file-name-nondirectory original) device)
+              '((?m "merge both" "Keep every line from both files; save; trash the conflict copy.")
+                (?k "keep original" "Trash the conflict copy; the original stays as it is.")
+                (?t "take conflict" "Replace the original with the conflict copy, then trash it.")
+                (?s "skip" "Leave both files alone until Emacs restarts.")))
+        (?m (my/sync-conflict-write original (my/sync-conflict-union original conflict))
+            (my/sync-conflict-trash conflict)
+            (message "Merged %s into %s" (file-name-nondirectory conflict)
+                     (file-name-nondirectory original)))
+        (?k (my/sync-conflict-trash conflict))
+        (?t (my/sync-conflict-write original (my/file-string conflict))
+            (my/sync-conflict-trash conflict))
+        (_ (push conflict my/sync-conflict-skipped)))))))
+
+(defvar my/sync-conflict-timer nil
+  "Pending timer for the next conflict-file prompt, used to debounce bursts.")
+
+(defun my/sync-conflict-schedule-check (&optional delay)
+  "Prompt about conflict files after DELAY idle seconds (default 2)."
+  (unless (timerp my/sync-conflict-timer)
+    (setq my/sync-conflict-timer
+          (run-with-idle-timer (or delay 2) nil #'my/sync-conflict-check))))
+
+(defun my/sync-conflict-check ()
+  "Offer to walk through Syncthing conflict files, if there are any."
+  (setq my/sync-conflict-timer nil)
+  (if (active-minibuffer-window)
+      ;; Busy with another prompt: ask again later.
+      (my/sync-conflict-schedule-check 10)
+    ;; Clear the ones that need no decision before asking about the rest.
+    (dolist (conflict (my/sync-conflicts))
+      (let ((original (my/sync-conflict-original conflict)))
+        (when (file-exists-p original)
+          (my/sync-conflict-auto-resolve conflict original))))
+    (when-let* ((conflicts (my/sync-conflicts)))
+      (when (eq ?y (my/diff-and-choose
+                    nil
+                    (format "%d Syncthing conflict file%s under ~/org:"
+                            (length conflicts) (if (cdr conflicts) "s" ""))
+                    '((?y "review" "Go through them one at a time.")
+                      (?n "later" "Ask again next time a conflict appears or Emacs starts."))))
+        (mapc #'my/resolve-sync-conflict conflicts)))))
+
+(defun my/sync-conflict-watch-callback (event)
+  "Schedule a conflict prompt when Syncthing drops a conflict file."
+  (pcase-let ((`(,_ ,action ,file ,file1) event))
+    (when (and (memq action '(created renamed))
+               (string-match-p my/sync-conflict-regexp
+                               (or (and (eq action 'renamed) file1) file)))
+      (my/sync-conflict-schedule-check))))
+
+(require 'filenotify)
+(add-hook 'emacs-startup-hook
+          (lambda ()
+            (my/sync-conflict-schedule-check 5)
+            (when (file-directory-p "~/org/daily")
+              (file-notify-add-watch (expand-file-name "~/org/daily")
+                                     '(change)
+                                     #'my/sync-conflict-watch-callback))))
 
 (use-package ivy
     :diminish
