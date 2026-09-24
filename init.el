@@ -78,23 +78,6 @@
   (interactive)
   (org-insert-time-stamp (current-time) t))
 
-(use-package eat :ensure t)
-
-;; claude-code.el isn't on any package archive; package-vc-install
-;; fetches it straight from GitHub (built into Emacs 29+).
-(unless (package-installed-p 'claude-code)
-  (package-vc-install "https://github.com/stevemolitor/claude-code.el"))
-
-;; Loaded before Custom Keybinds below, so claude-code-command-map
-;; already exists as a real keymap by the time general-define-key
-;; binds it -- referencing it before this block runs makes the
-;; symbol autoload incorrectly and fail with "Autoloading file
-;; ... failed to define function claude-code-command-map".
-(use-package claude-code
-  :demand t
-  :custom (claude-code-terminal-backend 'eat)
-  :config (claude-code-mode))
-
 ;; Make ESC quit prompts
 (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
 
@@ -108,16 +91,7 @@
   "f" 'vulpea-find
   "i" 'vulpea-insert
   "t" 'my-org-insert-current-datetime
-  "l" 'my/lab-notebook-list
-  ;; unquoted: bind the keymap's actual value, not the bare
-  ;; symbol -- a quoted symbol here gets resolved later via
-  ;; indirect-function, which follows claude-code-command-map's
-  ;; function cell rather than its value cell and falls through
-  ;; to a stale autoload stub ("Autoloading file ... failed to
-  ;; define function claude-code-command-map"). Binding the
-  ;; already-loaded keymap value directly (see :demand t above)
-  ;; sidesteps the autoload path entirely.
-  "a" claude-code-command-map)
+  "l" 'my/lab-notebook-list)
 
 (use-package which-key
   :init (which-key-mode)
