@@ -614,6 +614,10 @@ per-row features can hang off of."
       kept-old-versions 5
       backup-directory-alist '(("." . "~/.emacs.d/backups")))
 
+;; Emacs normally backs a file up only on its first save per session; make
+;; every save keep a numbered backup (the newest 20 per file survive).
+(add-hook 'before-save-hook (lambda () (setq buffer-backed-up nil)))
+
 (defun my/journal-file-p (&optional file)
   "Non-nil if FILE (default: the current buffer's file) is a daily journal entry."
   (when-let ((file (or file (buffer-file-name))))
@@ -698,14 +702,17 @@ SHOW-DIFF may be nil to just ask."
 
 (defun my/journal-buffer-stale-function (&optional noconfirm)
   "`buffer-stale-function' for daily journal buffers.
-Defers to the default staleness check; if the file changed on disk and
-this buffer still has real content, never silently revert -- schedule
-a conflict prompt instead and report \"not stale\" so auto-revert
-leaves the buffer alone until the user decides."
+Auto-revert only ever reaches unmodified buffers, and normally reverting
+is right: the disk has newer text from another machine.  The one case
+blocked is the disk copy being only the template while this buffer has
+real content -- a blank daily from another machine replacing your
+notes.  Then schedule a prompt and report \"not stale\" until you decide."
   (let ((default-stale (buffer-stale--default-function noconfirm)))
     (cond
      ((not default-stale) default-stale)
      ((my/journal-template-only-p) default-stale)
+     ((not (my/journal-text-template-only-p (my/file-string (buffer-file-name))))
+      default-stale)
      (my/journal-conflict-pending nil)
      (t
       (setq my/journal-conflict-pending t)
@@ -726,13 +733,21 @@ leaves the buffer alone until the user decides."
     (with-current-buffer buffer
       (unwind-protect
           (pcase (my/diff-and-choose
-                  (lambda () (diff-buffer-with-file buffer))
-                  (format "Buffer %s has content but the file changed on disk. What now?"
-                          (buffer-name))
-                  '((?k "keep buffer" "Discard the disk change; keep this buffer as-is.")
-                    (?t "take disk" "Discard this buffer's content; load what is on disk.")
+                  (lambda ()
+                    (my/sync-conflict-show-diff
+                     (my/file-string (buffer-file-name)) (buffer-string)
+                     "  - lines: on disk now (only the template)\n  + lines: your notes in this buffer"
+                     "DISK" "BUFFER"))
+                  (format "%s on disk is now only the template, but this buffer has %d lines of notes:"
+                          (buffer-name) (count-lines (point-min) (point-max)))
+                  '((?k "keep my notes" "Write this buffer's notes back over the blank template on disk.")
+                    (?t "take blank template" "Throw away this buffer's notes (asks to confirm).")
                     (?e "merge" "Open an ediff session to merge the two by hand.")))
-            (?t (revert-buffer 'ignore-auto 'dont-ask 'preserve-modes))
+            (?k (set-visited-file-modtime)
+                (set-buffer-modified-p t)
+                (save-buffer))
+            (?t (when (yes-or-no-p (format "Really discard the notes in %s? " (buffer-name)))
+                  (revert-buffer 'ignore-auto 'dont-ask 'preserve-modes)))
             (?e (my/journal-ediff-merge buffer))
             (_ nil))
         (setq my/journal-conflict-pending nil)))))
@@ -876,16 +891,22 @@ Saves the buffer, and offers to redirect links to any :ID: that was removed."
   "Replace ORIGINAL's contents with TEXT and save, through its normal buffer.
 Repeated drawer properties (e.g. both machines' :ID:) are reduced to the
 first, and links to any ID that disappears are offered a redirect."
-  (with-current-buffer (find-file-noselect original)
+  (with-current-buffer (find-file-noselect original 'nowarn)
     (let ((before (my/buffer-ids)))
+      ;; We are replacing the file on purpose, so don't stop to ask
+      ;; whether it changed on disk since this buffer last read it.
+      (set-visited-file-modtime)
       (erase-buffer)
       (insert text)
       (my/tidy-ids-and-save before))))
 
 (defun my/sync-conflict-original-text (original)
-  "Return ORIGINAL's text, from its open buffer if there is one.
-That way unsaved typing counts, rather than only what's on disk."
-  (if-let* ((buf (find-buffer-visiting original)))
+  "Return ORIGINAL's text: its buffer's if that has unsaved edits, else the disk's.
+An unmodified buffer is only a possibly stale copy of an earlier disk
+version -- often the very text Syncthing just moved into the conflict
+copy -- so it must not stand in for what is on disk now."
+  (if-let* ((buf (find-buffer-visiting original))
+            ((buffer-modified-p buf)))
       (with-current-buffer buf (buffer-string))
     (my/file-string original)))
 
@@ -1014,7 +1035,8 @@ CHOICE is recorded so `my/sync-conflict-undo-last' can say what it undoes."
   "Archive both sides, make ORIGINAL contain TEXT, then trash CONFLICT.
 CHOICE is a short description of what was picked, for the archive."
   (let ((dir (my/sync-conflict-archive original conflict choice)))
-    (unless (string= text (my/sync-conflict-original-text original))
+    (unless (and (string= text (my/sync-conflict-original-text original))
+                 (string= text (my/file-string original)))
       (my/sync-conflict-write original text))
     (my/sync-conflict-trash conflict)
     (message "%s: %s.  Both versions archived in %s -- M-x my/sync-conflict-undo-last reverts"
