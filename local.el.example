@@ -1,0 +1,32 @@
+;;; local.el --- settings for this computer only  -*- lexical-binding: t; -*-
+;;
+;; Emacs copies local.el.example to local.el on first start.  local.el is
+;; not tracked in git, so edit it freely; restart Emacs to apply changes.
+;; It is loaded near the top of init.el, before these settings are used.
+
+;; Font size in 1/10 pt: 120 = 12pt.  nil scales it to the screen height.
+(setq my/font-height nil)
+;; Size of the proportional (Org prose) font; nil means same as above.
+(setq my/variable-font-height nil)
+
+;; Font names, as listed by `fc-list : family' in a terminal.
+(setq my/fixed-font "Fira Code Retina")
+(setq my/variable-font "Cantarell")
+
+;; Theme: any name from M-x load-theme, e.g. 'doom-one or 'modus-vivendi.
+;; nil keeps Emacs's default look.
+(setq my/theme 'doom-laserwave)
+
+;; Notes folder.  Keep it the same as SYNC_DIR in wsl-workstation's
+;; config.env, so Syncthing syncs it to your other computers.
+(setq my/org-dir "~/org/")
+
+;; Folder holding Zotero's PDFs.  nil means zotero-pdfs/ in the uWaterloo
+;; OneDrive (found through Windows).  Example of a fixed path:
+;; (setq my/zotero-pdf-dir "/mnt/c/Users/YOU/Zotero/storage/")
+(setq my/zotero-pdf-dir nil)
+
+;; To change something that is set later in init.el, run it once Emacs has
+;; finished starting, so init.el doesn't overwrite it:
+;; (add-hook 'after-init-hook
+;;           (lambda () (setq org-agenda-files (list org-directory))))
