@@ -716,18 +716,28 @@ the real notes written on another, so a blank daily never reaches disk."
     (delete-file conflict t))
   (message "Trashed %s" (file-name-nondirectory conflict)))
 
-(defun my/sync-conflict-finish (original conflict)
-  "After merging, save ORIGINAL and offer to trash CONFLICT."
+(defun my/sync-conflict-describe (file)
+  "Return FILE's size and modification time, for choosing between versions."
+  (let ((attrs (file-attributes file)))
+    (format "%d bytes, saved %s"
+            (file-attribute-size attrs)
+            (format-time-string "%b %d %H:%M"
+                                (file-attribute-modification-time attrs)))))
+
+(defun my/sync-conflict-keep-copy (original conflict)
+  "Replace ORIGINAL with CONFLICT, moving the old ORIGINAL to the trash."
+  (let ((delete-by-moving-to-trash t))
+    (delete-file original t))
+  (rename-file conflict original)
   (when-let* ((buf (find-buffer-visiting original)))
-    (with-current-buffer buf
-      (when (buffer-modified-p) (save-buffer))))
-  (when (y-or-n-p (format "Done merging?  Trash %s? " (file-name-nondirectory conflict)))
-    (my/sync-conflict-trash conflict)))
+    (with-current-buffer buf (revert-buffer t t t)))
+  (message "Kept the conflict copy as %s (old version is in the trash)"
+           (file-name-nondirectory original)))
 
 (defun my/resolve-sync-conflict (conflict)
-  "Merge the Syncthing CONFLICT copy into its original with ediff.
-A is the original, B the conflict copy.  Copy what you want from B into A
-with `b', or edit A directly; quit with `q' to save A and trash B."
+  "Resolve a Syncthing CONFLICT copy by choosing which version to keep.
+The version not kept goes to the trash.  `d' shows a diff first; to merge
+by hand, edit the original yourself and then choose to keep it."
   (interactive
    (let ((conflicts (my/sync-conflicts)))
      (unless conflicts (user-error "No Syncthing conflict files under ~/org"))
@@ -744,11 +754,22 @@ with `b', or edit A directly; quit with `q' to save A and trash B."
                               (file-name-nondirectory conflict)))
         (my/sync-conflict-trash conflict)))
      (t
-      (ediff-files original conflict
-                   (list (lambda ()
-                           (add-hook 'ediff-quit-hook
-                                     (lambda () (my/sync-conflict-finish original conflict))
-                                     nil t))))))))
+      (let ((prompt (format "%s\n  current file:  %s\n  conflict copy: %s\nKeep which? "
+                            (file-name-nondirectory original)
+                            (my/sync-conflict-describe original)
+                            (my/sync-conflict-describe conflict)))
+            choice)
+        (while (eq (car (setq choice
+                              (read-multiple-choice
+                               prompt '((?c "conflict copy" "Replace the current file with the conflict copy")
+                                        (?o "current file" "Keep the current file, trash the conflict copy")
+                                        (?d "diff" "Show what differs, then choose")
+                                        (?q "quit" "Decide later")))))
+                   ?d)
+          (diff original conflict nil t))
+        (pcase (car choice)
+          (?c (my/sync-conflict-keep-copy original conflict))
+          (?o (my/sync-conflict-trash conflict))))))))
 
 (defvar my/sync-conflicts-reported nil
   "Conflict copies already reported, so each is announced only once.")
