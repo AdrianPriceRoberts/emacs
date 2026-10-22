@@ -34,7 +34,7 @@
   "Monospaced font for code and most text.")
 (defvar my/variable-font "Cantarell"
   "Proportional font for Org prose and headings.")
-(defvar my/theme 'doom-laserwave
+(defvar my/theme 'doom-
   "Theme to load, or nil for Emacs's default look.")
 (defvar my/org-dir "~/org/"
   "Notes folder; should be the folder Syncthing syncs.")
@@ -79,13 +79,20 @@
   :init (doom-modeline-mode 1)
   :custom ((doom-modeline-height 15)))
 
-(when my/theme
-  (load-theme my/theme t))
+(defun my/load-theme ()
+  "Switch to `my/theme', or Emacs's default look if it is nil."
+  (mapc #'disable-theme custom-enabled-themes)
+  (when my/theme
+    (condition-case err
+        (load-theme my/theme t)
+      (error (message "Couldn't load theme %S (set in local.el): %s"
+                      my/theme (error-message-string err)))))
+  (when (eq my/theme 'doom-laserwave)
+    (custom-theme-set-faces
+     'doom-laserwave
+     '(gnus-group-news-low-empty ((t :inherit gnus-group-mail-1-empty))))))
 
-(when (eq my/theme 'doom-laserwave)
-  (custom-theme-set-faces
-   'doom-laserwave
-   '(gnus-group-news-low-empty ((t :inherit gnus-group-mail-1-empty)))))
+(my/load-theme)
 
 ;; Rainbow brackets
 (use-package rainbow-delimiters
@@ -100,19 +107,41 @@
 (defun my/font-height ()
   (or my/font-height (scaled-font-size)))
 
-;; Newer Ubuntu releases may not have the "Retina" weight of Fira Code.
-(when (and (display-graphic-p) (not (find-font (font-spec :name my/fixed-font))))
-  (setq my/fixed-font "Fira Code"))
+(defun my/set-fonts ()
+  "Apply `my/fixed-font', `my/variable-font' and their heights."
+  ;; Newer Ubuntu releases may not have the "Retina" weight of Fira Code.
+  (when (and (display-graphic-p) (not (find-font (font-spec :name my/fixed-font))))
+    (setq my/fixed-font "Fira Code"))
 
-;; Set default font
-(set-face-attribute 'default nil :font my/fixed-font :height (my/font-height))
+  ;; Set default font
+  (set-face-attribute 'default nil :font my/fixed-font :height (my/font-height))
 
-;; Set the fixed pitch face
-(set-face-attribute 'fixed-pitch nil :font my/fixed-font :height (my/font-height))
+  ;; Set the fixed pitch face
+  (set-face-attribute 'fixed-pitch nil :font my/fixed-font :height (my/font-height))
 
-;; Set the variable pitch face
-(set-face-attribute 'variable-pitch nil :font my/variable-font
-                    :height (or my/variable-font-height (my/font-height)) :weight 'regular)
+  ;; Set the variable pitch face
+  (set-face-attribute 'variable-pitch nil :font my/variable-font
+                      :height (or my/variable-font-height (my/font-height)) :weight 'regular))
+
+(my/set-fonts)
+
+(defun my/reload-local-settings ()
+  "Reload local.el and apply its theme and fonts."
+  (interactive)
+  (load (expand-file-name "local.el" user-emacs-directory) nil t)
+  (my/load-theme)
+  (my/set-fonts)
+  ;; Otherwise keep `my/load-theme's error message on screen.
+  (when (or (null my/theme) (custom-theme-enabled-p my/theme))
+    (message "Applied local.el (folder changes need a restart)")))
+
+(defun my/reload-local-settings-on-save ()
+  (when (and buffer-file-name
+             (file-equal-p buffer-file-name
+                           (expand-file-name "local.el" user-emacs-directory)))
+    (my/reload-local-settings)))
+
+(add-hook 'after-save-hook #'my/reload-local-settings-on-save)
 
 (setq select-active-regions nil)
 
@@ -121,11 +150,36 @@
   (interactive)
   (org-insert-time-stamp (current-time) t))
 
+(defun my/update-emacs-config ()
+  "Download the latest configuration with git pull, then offer to restart."
+  (interactive)
+  (let ((default-directory user-emacs-directory)
+        (process-environment (cons "GIT_TERMINAL_PROMPT=0" process-environment))
+        (buf (get-buffer-create "*Config update*")))
+    (with-current-buffer buf (erase-buffer))
+    (message "Updating the Emacs configuration...")
+    (cond
+     ((not (zerop (call-process "git" nil buf nil "pull" "--ff-only")))
+      (display-buffer buf)
+      (message "Update failed; see *Config update* for git's message"))
+     ((with-current-buffer buf
+        (goto-char (point-min))
+        (search-forward "Already up to date" nil t))
+      (message "The configuration is already up to date"))
+     ((y-or-n-p "Configuration updated.  Restart Emacs now to use it? ")
+      (restart-emacs))
+     (t (message "Configuration updated; restart Emacs to use it")))))
+
 ;; Make ESC quit prompts
 (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
 
 ;; general is useful for defining custom keybindings
 (use-package general)
+
+(defun my/cheat-sheet ()
+  "Show the cheat sheet of basic Emacs keys and this config's keys."
+  (interactive)
+  (view-file (expand-file-name "CHEATSHEET.org" user-emacs-directory)))
 
 (general-define-key
  :prefix "C-c"
@@ -134,7 +188,11 @@
   "f" 'vulpea-find
   "i" 'vulpea-insert
   "t" 'my-org-insert-current-datetime
-  "l" 'my/lab-notebook-list)
+  "l" 'my/lab-notebook-list
+  "h" 'my/cheat-sheet)
+
+(add-hook 'emacs-startup-hook
+          (lambda () (message "New to this setup?  C-c h shows the cheat sheet.")))
 
 (use-package which-key
   :init (which-key-mode)

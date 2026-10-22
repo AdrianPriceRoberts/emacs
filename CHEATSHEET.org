@@ -1,0 +1,157 @@
+#+title: Emacs cheat sheet
+
+Press =C-c h= in Emacs to open this page.  Press =q= to close it.
+
+* How to read key names
+| Written     | Means                                                    |
+|-------------+----------------------------------------------------------|
+| =C-x=       | hold Ctrl and press x                                    |
+| =M-x=       | hold Alt and press x ("M" is for Meta, Emacs's old name for Alt) |
+| =S-TAB=     | hold Shift and press Tab                                 |
+| =C-x C-f=   | Ctrl+x, then Ctrl+f (you can keep holding Ctrl)          |
+| =C-x 1=     | Ctrl+x, let go, then press 1                             |
+| =RET=       | the Enter key                                            |
+
+* The big picture
+Most keys are in families that start with the same prefix:
+
+- *=C-x= is Emacs's own stuff:* files, buffers, windows, quitting.  These
+  keys are the same in every Emacs, anywhere.
+- *=C-c= is this setup's note-taking:* journal, notes, the lab notebook,
+  citations.  Emacs keeps =C-c= plus a letter free for you to define, so
+  these are the keys this config adds.
+- *=C-c C-=something inside a note* is Org mode (the note format), e.g.
+  =C-c C-o= opens a link.
+- *=C-h= is help*, and *=M-x= runs any command by name*.
+
+You don't need to memorise these.  Press a prefix like =C-x= or =C-c= and
+wait half a second: a popup at the bottom lists every key that can follow.
+
+A *buffer* is anything open in Emacs: a file, a note, a list.  A *window*
+is a pane on screen showing one buffer.  The line at the bottom of the
+screen (the *minibuffer*) is where Emacs asks questions and shows
+messages.
+
+* Getting unstuck
+| Key       | Does                                                      |
+|-----------+-----------------------------------------------------------|
+| =C-g=     | cancel whatever is happening (press it a few times if needed) |
+| =ESC=     | also cancels a question at the bottom of the screen      |
+| =C-/=     | undo                                                      |
+| =C-c h=   | this cheat sheet                                          |
+| =C-x C-c= | quit Emacs (it asks before discarding unsaved changes)    |
+
+* Files and buffers (=C-x=)
+| Key            | Does                                                   |
+|----------------+--------------------------------------------------------|
+| =C-x C-f=      | open (find) a file                                     |
+| =C-x C-s=      | save                                                   |
+| =C-x b=        | switch to another open buffer                          |
+| =C-x <left>=   | go back to the previous buffer                         |
+| =C-x <right>=  | go forward to the next buffer                          |
+| =C-x k=        | close (kill) a buffer; the file itself is kept         |
+
+* Windows (=C-x= and a number)
+| Key     | Does                                                    |
+|---------+---------------------------------------------------------|
+| =C-x 1= | make the window you're in fill the screen               |
+| =C-x 2= | split the screen top and bottom                         |
+| =C-x 3= | split the screen side by side                           |
+| =C-x o= | move to the other window                                |
+| =C-x 0= | close this window (the buffer stays open)               |
+
+* Moving, searching and editing
+The arrow keys, Home, End, Page Up and Page Down all work as usual.
+
+| Key            | Does                                                  |
+|----------------+-------------------------------------------------------|
+| =C-s=          | search this buffer (=C-j= / =C-k= step through matches) |
+| =C-a= / =C-e=  | start / end of the line                               |
+| =M-<= / =M->=  | top / bottom of the buffer                            |
+| =C-SPC=        | start selecting; move to extend the selection         |
+| =M-w=          | copy                                                  |
+| =C-w=          | cut                                                   |
+| =C-y=          | paste                                                 |
+| =C-/=          | undo                                                  |
+
+Ctrl+C and Ctrl+V do *not* copy and paste in Emacs: =C-c= starts this
+setup's commands, and =C-v= scrolls down a page.
+
+* Notes (=C-c=)
+| Key       | Does                                                       |
+|-----------+------------------------------------------------------------|
+| =C-c j=   | go to today's journal (it also opens when Emacs starts)    |
+| =C-c f=   | find a note by title and open it                           |
+| =C-c c=   | create a new note: =n= note, =l= lab notebook entry, =e= experiment |
+| =C-c i=   | insert a link to another note (or create it)               |
+| =C-c t=   | insert the current date and time                           |
+| =C-c l=   | list of lab notebook entries                               |
+| =C-c v=   | attach what's on the Windows clipboard (an image or copied files) |
+
+When creating a note with =C-c c=, write it, then press =C-c C-c= to save
+it or =C-c C-k= to throw it away.
+
+In a lab notebook entry, =C-c n= and =C-c p= go to the next and previous
+page.
+
+* Writing in a note (Org mode)
+| Key                | Does                                            |
+|--------------------+-------------------------------------------------|
+| =TAB=              | fold / unfold the heading under the cursor      |
+| =S-TAB=            | fold / unfold every heading                     |
+| =M-RET=            | new heading (or list item) below this one       |
+| =M-<left>= / =M-<right>= | make a heading higher / lower level       |
+| =M-<up>= / =M-<down>=    | move a heading (with its contents) up / down |
+| =C-c C-o=          | open the link under the cursor                  |
+
+Headings are lines starting with =*= (=**= for a sub-heading, and so on).
+
+* Citations (=C-c=)
+| Key     | Does                                           |
+|---------+------------------------------------------------|
+| =C-c b= | insert a citation from the Zotero library      |
+| =C-c n= | open your notes on a paper                     |
+| =C-c r= | browse the whole bibliography                  |
+
+* Lists (lab notebook and bibliography)
+| Key   | Does                                             |
+|-------+--------------------------------------------------|
+| =RET= | open the entry under the cursor                  |
+| =o=   | open the paper's PDF (bibliography only)          |
+| =s=   | sort by a column (again to reverse)              |
+| =/=   | filter by a column; comma-separate words to match any of them |
+| =c=   | clear the filters                                |
+| =g=   | refresh                                          |
+| =q=   | close the list                                   |
+
+* Answering questions at the bottom of the screen
+When Emacs asks for a file, a note or a command, a list of matches
+appears as you type.
+
+| Key           | Does                                        |
+|---------------+---------------------------------------------|
+| type          | narrow the list                             |
+| =C-j= / =C-k= | move down / up the list (arrows work too)   |
+| =RET=         | pick the highlighted match                  |
+| =TAB=         | complete; for a folder, go into it          |
+| =C-g= / =ESC= | give up                                     |
+
+* Help
+| Key       | Does                                                    |
+|-----------+---------------------------------------------------------|
+| =C-h k=   | press any key afterwards to see what it does            |
+| =C-h f=   | describe a command                                      |
+| =M-x=     | run any command by typing (part of) its name            |
+| =C-h t=   | Emacs's built-in tutorial (about 30 minutes)            |
+
+* Settings for this computer
+Fonts, font size, theme and the notes folder are set in
+=~/.emacs.d/local.el=.  Open it with =C-x C-f=, change it, and save with
+=C-x C-s=: the theme and fonts change straight away.  A different notes
+folder needs Emacs restarted.
+
+* Getting the latest version of this setup
+=M-x my/update-emacs-config= downloads the newest configuration (it runs
+=git pull= for you) and offers to restart Emacs so it takes effect.  If
+it can't update, it shows git's explanation in a =*Config update*=
+buffer.

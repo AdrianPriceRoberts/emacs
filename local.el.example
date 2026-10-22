@@ -1,7 +1,8 @@
 ;;; local.el --- settings for this computer only  -*- lexical-binding: t; -*-
 ;;
 ;; Emacs copies local.el.example to local.el on first start.  local.el is
-;; not tracked in git, so edit it freely; restart Emacs to apply changes.
+;; not tracked in git, so edit it freely.  Saving it in Emacs applies the
+;; theme and fonts at once; folder changes need Emacs restarted.
 ;; It is loaded near the top of init.el, before these settings are used.
 
 ;; Font size in 1/10 pt: 120 = 12pt.  nil scales it to the screen height.

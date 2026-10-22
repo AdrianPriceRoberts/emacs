@@ -56,7 +56,7 @@ this early so the rest of the config uses its values.
   "Monospaced font for code and most text.")
 (defvar my/variable-font "Cantarell"
   "Proportional font for Org prose and headings.")
-(defvar my/theme 'doom-laserwave
+(defvar my/theme 'doom-
   "Theme to load, or nil for Emacs's default look.")
 (defvar my/org-dir "~/org/"
   "Notes folder; should be the folder Syncthing syncs.")
@@ -113,10 +113,12 @@ this early so the rest of the config uses its values.
     :ensure t
     :init (doom-modeline-mode 1)
     :custom ((doom-modeline-height 15)))
-
-  (when my/theme
-    (load-theme my/theme t))
 #+end_src
+
+=my/load-theme= switches to =my/theme=.  It runs at startup and again
+whenever =local.el= is saved (see /Applying local.el changes/ below).  A
+misspelled or uninstalled theme gets a message instead of an error that
+would stop the rest of the config loading.
 
 doom-themes makes =gnus-group-news-low-empty= inherit from
 =gnus-group-news-low=, but Emacs 31's gnus defines =gnus-group-news-low= to
@@ -124,12 +126,23 @@ inherit from =gnus-group-news-low-empty=. Every time faces are recomputed
 (loading gnus, or creating any new frame -- e.g. ediff's control frame) that
 is an inheritance cycle and an error, which aborts whatever was running.
 Replace the theme's own spec: a =user= override isn't enough, since
-=face-spec-recalc= still applies the theme's spec on the way.
+=face-spec-recalc= still applies the theme's spec on the way.  It's
+reapplied after every load, because =load-theme= clears it.
 #+begin_src emacs-lisp
-(when (eq my/theme 'doom-laserwave)
-  (custom-theme-set-faces
-   'doom-laserwave
-   '(gnus-group-news-low-empty ((t :inherit gnus-group-mail-1-empty)))))
+(defun my/load-theme ()
+  "Switch to `my/theme', or Emacs's default look if it is nil."
+  (mapc #'disable-theme custom-enabled-themes)
+  (when my/theme
+    (condition-case err
+        (load-theme my/theme t)
+      (error (message "Couldn't load theme %S (set in local.el): %s"
+                      my/theme (error-message-string err)))))
+  (when (eq my/theme 'doom-laserwave)
+    (custom-theme-set-faces
+     'doom-laserwave
+     '(gnus-group-news-low-empty ((t :inherit gnus-group-mail-1-empty))))))
+
+(my/load-theme)
 #+end_src
 
 ** Rainbow Brackets
@@ -150,19 +163,47 @@ Replace the theme's own spec: a =user= override isn't enough, since
 (defun my/font-height ()
   (or my/font-height (scaled-font-size)))
 
-;; Newer Ubuntu releases may not have the "Retina" weight of Fira Code.
-(when (and (display-graphic-p) (not (find-font (font-spec :name my/fixed-font))))
-  (setq my/fixed-font "Fira Code"))
+(defun my/set-fonts ()
+  "Apply `my/fixed-font', `my/variable-font' and their heights."
+  ;; Newer Ubuntu releases may not have the "Retina" weight of Fira Code.
+  (when (and (display-graphic-p) (not (find-font (font-spec :name my/fixed-font))))
+    (setq my/fixed-font "Fira Code"))
 
-;; Set default font
-(set-face-attribute 'default nil :font my/fixed-font :height (my/font-height))
+  ;; Set default font
+  (set-face-attribute 'default nil :font my/fixed-font :height (my/font-height))
 
-;; Set the fixed pitch face
-(set-face-attribute 'fixed-pitch nil :font my/fixed-font :height (my/font-height))
+  ;; Set the fixed pitch face
+  (set-face-attribute 'fixed-pitch nil :font my/fixed-font :height (my/font-height))
 
-;; Set the variable pitch face
-(set-face-attribute 'variable-pitch nil :font my/variable-font
-                    :height (or my/variable-font-height (my/font-height)) :weight 'regular)
+  ;; Set the variable pitch face
+  (set-face-attribute 'variable-pitch nil :font my/variable-font
+                      :height (or my/variable-font-height (my/font-height)) :weight 'regular))
+
+(my/set-fonts)
+#+end_src
+
+** Applying local.el changes
+Saving =local.el= in Emacs reloads it and applies the theme and fonts
+straight away.  The notes and Zotero folders are read once at startup,
+so changing those still needs a restart.
+#+begin_src emacs-lisp
+(defun my/reload-local-settings ()
+  "Reload local.el and apply its theme and fonts."
+  (interactive)
+  (load (expand-file-name "local.el" user-emacs-directory) nil t)
+  (my/load-theme)
+  (my/set-fonts)
+  ;; Otherwise keep `my/load-theme's error message on screen.
+  (when (or (null my/theme) (custom-theme-enabled-p my/theme))
+    (message "Applied local.el (folder changes need a restart)")))
+
+(defun my/reload-local-settings-on-save ()
+  (when (and buffer-file-name
+             (file-equal-p buffer-file-name
+                           (expand-file-name "local.el" user-emacs-directory)))
+    (my/reload-local-settings)))
+
+(add-hook 'after-save-hook #'my/reload-local-settings-on-save)
 #+end_src
 
 #+RESULTS:
@@ -185,8 +226,40 @@ Replace the theme's own spec: a =user= override isn't enough, since
 #+RESULTS:
 : my-org-insert-current-datetime
 
-* Custom Keybinds
+* Updating the configuration
+=M-x my/update-emacs-config= runs =git pull= in =~/.emacs.d=, so nobody
+has to open a terminal to get the latest config.  =init.el= is committed
+alongside =emacs.org=, so the pull alone is enough; restarting Emacs
+loads it.  =--ff-only= refuses to merge: if this computer has its own
+commits or edits that clash, git's message is shown instead and nothing
+changes.  =GIT_TERMINAL_PROMPT=0= makes git fail rather than wait for a
+password prompt nobody can see.
+#+begin_src emacs-lisp
+(defun my/update-emacs-config ()
+  "Download the latest configuration with git pull, then offer to restart."
+  (interactive)
+  (let ((default-directory user-emacs-directory)
+        (process-environment (cons "GIT_TERMINAL_PROMPT=0" process-environment))
+        (buf (get-buffer-create "*Config update*")))
+    (with-current-buffer buf (erase-buffer))
+    (message "Updating the Emacs configuration...")
+    (cond
+     ((not (zerop (call-process "git" nil buf nil "pull" "--ff-only")))
+      (display-buffer buf)
+      (message "Update failed; see *Config update* for git's message"))
+     ((with-current-buffer buf
+        (goto-char (point-min))
+        (search-forward "Already up to date" nil t))
+      (message "The configuration is already up to date"))
+     ((y-or-n-p "Configuration updated.  Restart Emacs now to use it? ")
+      (restart-emacs))
+     (t (message "Configuration updated; restart Emacs to use it")))))
+#+end_src
 
+* Custom Keybinds
+Emacs's own file keys live under =C-x= (=C-x C-f= opens a file); this
+config's note-taking keys live under =C-c=.  =CHEATSHEET.org= lists all
+of these; =C-c h= opens it.
 #+begin_src emacs-lisp
 
         ;; Make ESC quit prompts
@@ -195,6 +268,11 @@ Replace the theme's own spec: a =user= override isn't enough, since
         ;; general is useful for defining custom keybindings
         (use-package general)
 
+        (defun my/cheat-sheet ()
+          "Show the cheat sheet of basic Emacs keys and this config's keys."
+          (interactive)
+          (view-file (expand-file-name "CHEATSHEET.org" user-emacs-directory)))
+
         (general-define-key
          :prefix "C-c"
           "c" 'org-capture
@@ -202,7 +280,11 @@ Replace the theme's own spec: a =user= override isn't enough, since
           "f" 'vulpea-find
           "i" 'vulpea-insert
           "t" 'my-org-insert-current-datetime
-          "l" 'my/lab-notebook-list)
+          "l" 'my/lab-notebook-list
+          "h" 'my/cheat-sheet)
+
+        (add-hook 'emacs-startup-hook
+                  (lambda () (message "New to this setup?  C-c h shows the cheat sheet.")))
 #+end_src
 
 #+RESULTS:

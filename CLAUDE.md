@@ -17,6 +17,16 @@ A change made only in `init.el` is silently lost the next time `emacs.org`
 is saved. If `init.el` ever differs from what `emacs.org` tangles to, port
 the difference into `emacs.org` first; don't regenerate over it.
 
+## Keep the cheat sheet current
+
+`CHEATSHEET.org` is the beginner's guide to this config (`C-c h` opens
+it in Emacs; `README.md` links to it on GitHub). Whenever a change adds,
+removes, or rebinds a custom keybinding, or adds a command users are
+meant to run with `M-x`, update `CHEATSHEET.org` in the same commit, in
+the section matching its prefix (`C-x` is Emacs's own keys, `C-c` is
+this config's). Check that each key listed there is still bound to
+what it says.
+
 ## Per-machine settings
 
 Fonts, font sizes, theme and folder paths are `defvar`s under
